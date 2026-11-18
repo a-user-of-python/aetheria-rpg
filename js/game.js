@@ -85,7 +85,11 @@ function makeHumanoid(skin, hairColor, hairStyle, outfit){
 function attachWeapon(rig, item){
   while(rig.weaponMount.children.length) rig.weaponMount.remove(rig.weaponMount.children[0]);
   if(!item) return;
-  const m=makeItemModel(item); m.scale.setScalar(0.85); m.rotation.z=Math.PI; // grip at the hand, blade/staff continues past the fist (was flipped backwards)
+  const m=makeItemModel(item); m.scale.setScalar(0.85);
+  // Held weapons point FORWARD from the fist (perpendicular to the forearm) so a
+  // swing sweeps the blade through the target. Bows and lutes are held upright.
+  if(item.shape==="bow"||item.shape==="lute") m.rotation.set(0,0,0);
+  else m.rotation.x=Math.PI/2;
   rig.weaponMount.add(m);
 }
 let atkAnimStart=0, castAnimStart=0;
@@ -673,6 +677,8 @@ function animate(){
   scene.userData.sun.position.set(P.pos.x+120, P.pos.y+220, P.pos.z+80); scene.userData.sun.target=playerMesh;
   if(world.orb) world.orb.rotation.y+=dt;
   if(world.clouds){ for(const c of world.clouds.children){ c.position.x+=dt*1.6; if(c.position.x>1400) c.position.x=-1400; } }
+  if(world.birds){ const t=now*0.001; for(const b of world.birds){ const a=t*b.sp*10+b.ph; b.grp.position.set(b.cx+Math.cos(a)*b.r, b.h+Math.sin(t*0.7+b.ph)*3, b.cz+Math.sin(a)*b.r); b.grp.rotation.y=-a; const flap=Math.sin(t*9+b.ph)*0.65; b.grp.userData.wl.rotation.z=flap; b.grp.userData.wr.rotation.z=-flap; } }
+  if(world.flies){ const t=now*0.001; for(const f of world.flies){ const a=t*f.sp+f.ph; f.grp.position.set(f.ax+Math.cos(a)*f.r, f.ay+2.2+Math.sin(t*2.1+f.ph)*0.8, f.az+Math.sin(a)*f.r); f.grp.rotation.y=-a; const flap=Math.sin(t*16+f.ph)*0.85; f.grp.userData.wl.rotation.z=flap; f.grp.userData.wr.rotation.z=-flap; } }
   markExplored();
   const inCombat=Date.now()-lastCombatAt<6000;
   $("hpWrap").classList.toggle("cond", !(P.hp<P.hpMax-0.5||inCombat));
