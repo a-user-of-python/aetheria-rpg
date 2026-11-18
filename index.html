@@ -30,7 +30,7 @@
       <div id="roomInfo"><small>Play together: open this page in another tab/window on this device, join with the host's 5-letter code, and you'll see each other in the world.</small></div>
     </div>
     <button id="startBtn" class="big">▶ Start Adventure</button>
-    <p class="help">WASD — move · Shift — sprint · Drag — look · <b>Click / Space</b> — attack · E — talk/open · 1–6 — spells · I — inventory · <b>B — spellbook</b> · <b>M — world map</b> · ` — Dev Mode</p>
+    <p class="help">WASD — move · Shift — sprint · Drag — look · <b>Click / Space</b> — attack · <b>Q — weapon ability</b> · E — talk/open · 1–6 — spells · I — inventory · <b>B — spellbook</b> · <b>M — world map</b> · ` — Dev Mode</p>
   </div>
 </div>
 
@@ -50,11 +50,12 @@
   </div>
   <canvas id="minimap" width="168" height="168"></canvas>
   <div id="questTracker" class="glass"></div>
+  <div id="abilityChip" class="glass" style="display:none"></div>
   <div id="spellBar"></div>
   <div id="interact" style="display:none"></div>
   <div id="toasts"></div>
   <div class="touchBtns">
-    <button id="atkBtn">✨ Attack</button><button id="intBtn">💬 Use (E)</button><button id="invBtn">🎒 Bag (I)</button><button id="sprBtn">🏃 Sprint (hold)</button>
+    <button id="atkBtn">✨ Attack</button><button id="abilBtn">🌀 Ability (Q)</button><button id="intBtn">💬 Use (E)</button><button id="invBtn">🎒 Bag (I)</button><button id="sprBtn">🏃 Sprint (hold)</button>
   </div>
   <div id="joy"><div id="knob"></div></div>
 </div>
