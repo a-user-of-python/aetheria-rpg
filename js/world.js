@@ -254,6 +254,24 @@ export function buildWorld(scene){
       const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.28,5.6,8), barkMat); pole.position.set(lx,ly+2.8,lz); vg.add(pole);
       const lamp=new THREE.Mesh(new THREE.SphereGeometry(0.65,14,10), new THREE.MeshStandardMaterial({color:0xffe9a8, emissive:0xffc44d, emissiveIntensity:1.8})); lamp.position.set(lx,ly+5.9,lz); vg.add(lamp);
       COLLIDERS.push({x:lx,z:lz,r:0.7}); }
+    // wooden fences along two arcs of the plaza — villages should feel lived-in
+    const fenceMat=textured(T.planks, 0x9a7a52, 1, 1, 0.95);
+    for(const arcStart of [0.5, 2.6]){ let prev=null;
+      for(let fi=0;fi<=7;fi++){ const fa=arcStart+fi*0.16, fx=v.x+Math.cos(fa)*31, fz=v.z+Math.sin(fa)*31, fy=terrainHeight(fx,fz);
+        const post=new THREE.Mesh(new THREE.BoxGeometry(0.5,2.6,0.5), fenceMat); post.position.set(fx,fy+1.3,fz); vg.add(post);
+        COLLIDERS.push({x:fx,z:fz,r:0.55});
+        if(prev){ const mx=(fx+prev.x)/2, mz=(fz+prev.z)/2, my=(fy+prev.y)/2;
+          for(const ry2 of [0.9,1.9]){ const rail=new THREE.Mesh(new THREE.BoxGeometry(Math.hypot(fx-prev.x,fz-prev.z)+0.4,0.32,0.32), fenceMat);
+            rail.position.set(mx,my+ry2,mz); rail.rotation.y=-Math.atan2(fz-prev.z,fx-prev.x); vg.add(rail); } }
+        prev={x:fx,z:fz,y:fy}; } }
+    // second market stall with a striped awning + crates
+    const stall2=new THREE.Group();
+    const counter=new THREE.Mesh(new THREE.BoxGeometry(8,2.6,3.6), textured(T.planks,0xb08a5a)); counter.position.y=1.3; stall2.add(counter);
+    for(const px of [-3.6,3.6]){ const p=new THREE.Mesh(new THREE.CylinderGeometry(0.24,0.24,6,8), barkMat); p.position.set(px,3,0); stall2.add(p); }
+    const awn=new THREE.Mesh(new THREE.BoxGeometry(9.6,0.35,5.6), textured(T.fabric, vi%2? 0xff7b6b:0x6bcbff, 3, 1, 0.9)); awn.position.y=6.1; awn.rotation.z=0.1; stall2.add(awn);
+    for(let ci=0;ci<3;ci++){ const crate=new THREE.Mesh(new THREE.BoxGeometry(1.7,1.7,1.7), textured(T.planks,0xc9a06a)); crate.position.set(-2.6+ci*2.1,0.85,2.8); stall2.add(crate); }
+    stall2.position.set(v.x+16, y, v.z-12); stall2.lookAt(v.x, y, v.z); vg.add(stall2);
+    COLLIDERS.push({x:v.x+16,z:v.z-12,r:4.4});
     group.add(vg); villages.push({...v, y, group:vg});
   });
 
@@ -285,6 +303,40 @@ export function buildWorld(scene){
     for(const [lx,lz,r] of [[-11,4,4.5],[11,4,4.5],[-8,-6,5],[8,-6,5],[0,-11,6],[-5.6,11.6,2.4],[5.6,11.6,2.4]]){ const w=lx2wx(lx,lz); COLLIDERS.push({x:w.x, z:w.z, r}); }
   }
 
+  // ---- Shrines: BOTW-style puzzle spots. Two kinds alternate:
+  // braziers (light all three with your attacks) and orb (carry the sun orb home).
+  const shrines=[];
+  const shrineSpots=[[-450,80],[350,430],[-150,-520],[700,300],[-820,300],[150,-950]];
+  const shrineStone=textured(T.rock, 0xd8d2c2, 1, 1, 0.95);
+  const shrineGlow=new THREE.MeshStandardMaterial({color:0x7ef0d4, emissive:0x2fd4ae, emissiveIntensity:1.7, roughness:0.25});
+  shrineSpots.forEach(([sx,sz],si)=>{
+    const sy=terrainHeight(sx,sz); const sg=new THREE.Group();
+    const plat=new THREE.Mesh(new THREE.CylinderGeometry(8,9,1.2,18), shrineStone); plat.position.y=0.4; plat.castShadow=true; sg.add(plat);
+    for(const px of [-5.5,5.5]){ const pil=new THREE.Mesh(new THREE.CylinderGeometry(1.1,1.3,10,10), shrineStone); pil.position.set(px,5.6,0); pil.castShadow=true; sg.add(pil);
+      const cap=new THREE.Mesh(new THREE.SphereGeometry(1.25,12,10), shrineGlow); cap.position.set(px,11.2,0); sg.add(cap);
+      COLLIDERS.push({x:sx+px, z:sz, r:1.5}); }
+    const lintel=new THREE.Mesh(new THREE.BoxGeometry(14.5,1.6,2.6), shrineStone); lintel.position.y=10.6; sg.add(lintel);
+    const crystal=new THREE.Mesh(new THREE.OctahedronGeometry(1.5), shrineGlow); crystal.position.y=7.6; crystal.scale.y=1.5; sg.add(crystal);
+    sg.position.set(sx,sy,sz); group.add(sg);
+    const shrine={x:sx, z:sz, y:sy, type: si%2===0? "braziers":"orb", solved:false, crystal};
+    if(shrine.type==="braziers"){ shrine.braziers=[];
+      for(let bi=0;bi<3;bi++){ const ba=bi/3*Math.PI*2+si, bx=sx+Math.cos(ba)*13, bz=sz+Math.sin(ba)*13, by=terrainHeight(bx,bz);
+        const bowl=new THREE.Mesh(new THREE.CylinderGeometry(1.5,0.9,1.6,10), shrineStone); bowl.position.set(bx,by+0.8,bz); group.add(bowl);
+        const flame=new THREE.Mesh(new THREE.ConeGeometry(0.85,2.6,8), new THREE.MeshStandardMaterial({color:0xffa657, emissive:0xff8830, emissiveIntensity:2.2, transparent:true, opacity:0.92}));
+        flame.position.set(bx,by+2.8,bz); flame.visible=false; group.add(flame);
+        COLLIDERS.push({x:bx,z:bz,r:1.4}); shrine.braziers.push({x:bx,z:bz,flame,lit:false}); }
+    } else { // orb on a pedestal a short trek away; socket ring at the shrine
+      const oa=si*1.7+0.6, ox=sx+Math.cos(oa)*34, oz=sz+Math.sin(oa)*34, oy=terrainHeight(ox,oz);
+      const ped=new THREE.Mesh(new THREE.CylinderGeometry(1.6,2.1,2.6,10), shrineStone); ped.position.set(ox,oy+1.3,oz); group.add(ped);
+      COLLIDERS.push({x:ox,z:oz,r:1.8});
+      const orbM=new THREE.Mesh(new THREE.SphereGeometry(1.15,18,14), new THREE.MeshStandardMaterial({color:0xffe9a8, emissive:0xffc44d, emissiveIntensity:1.9}));
+      orbM.position.set(ox,oy+3.9,oz); group.add(orbM);
+      const ring=new THREE.Mesh(new THREE.TorusGeometry(2.6,0.32,8,22), shrineGlow); ring.rotation.x=Math.PI/2; ring.position.set(sx,sy+1.15,sz); group.add(ring);
+      shrine.orbMesh=orbM; shrine.orbHome={x:ox,z:oz,y:oy+3.9}; shrine.ring=ring;
+    }
+    shrines.push(shrine);
+  });
+
   // Dark Tower
   const tower=new THREE.Group(); const tx=880,tz=-880, ty=terrainHeight(tx,tz);
   const stoneMat=textured(T.rock, 0x8a84a0, 4, 6, 0.95);
@@ -303,7 +355,7 @@ export function buildWorld(scene){
   }
 
   scene.add(group);
-  return { villages, caves, towerPos:{x:tx,z:tz,y:ty}, orb, clouds, birds, flies };
+  return { villages, caves, towerPos:{x:tx,z:tz,y:ty}, orb, clouds, birds, flies, shrines };
 }
 // Tagged colliders can be removed again (e.g. camps rebuilt at a new density).
 export function addTaggedCollider(tag, c){ c.tag=tag; COLLIDERS.push(c); return c; }
@@ -312,4 +364,86 @@ export function removeTaggedColliders(tag){ for(let i=COLLIDERS.length-1;i>=0;i-
 export function collide(p, pr=1.2){
   for(const c of COLLIDERS){ const dx=p.x-c.x, dz=p.z-c.z; const rr=c.r+pr; const d2=dx*dx+dz*dz;
     if(d2<rr*rr && d2>0.0001){ const d=Math.sqrt(d2); p.x=c.x+dx/d*rr; p.z=c.z+dz/d*rr; } }
+}
+
+// ---------- Endless wilderness: the homeland is hand-built; beyond its edge the
+// world streams forever as deterministic tiles (same height/biome functions,
+// seeded scatter), so you can walk in any direction as long as you like. ----------
+const TILE=360;
+function makeTuftGeo(){
+  const posArr=[], colArr=[], idxArr=[]; let seed=7; const sr=()=>{ seed=(seed*16807)%2147483647; return seed/2147483647; };
+  const cBase=new THREE.Color(0x2e6b2c), cTip=new THREE.Color(0x9bdd84); let vOff=0;
+  for(let b=0;b<7;b++){ const ang=b/7*Math.PI*2+sr()*0.5, h=1.7+sr()*1.1, w=0.17, bend=0.35+sr()*0.4;
+    const local=[[-w,0,0],[w,0,0],[-w*0.55,h*0.6,bend*0.45],[w*0.55,h*0.6,bend*0.45],[0,h,bend]];
+    const cols=[cBase,cBase,cBase.clone().lerp(cTip,0.5),cBase.clone().lerp(cTip,0.5),cTip];
+    local.forEach((v,i)=>{ const vec=new THREE.Vector3(v[0],v[1],v[2]).applyAxisAngle(new THREE.Vector3(0,1,0),ang); posArr.push(vec.x,vec.y,vec.z); colArr.push(cols[i].r,cols[i].g,cols[i].b); });
+    idxArr.push(vOff,vOff+1,vOff+2, vOff+2,vOff+1,vOff+3, vOff+2,vOff+3,vOff+4); vOff+=5; }
+  const g=new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(posArr,3));
+  g.setAttribute("color", new THREE.Float32BufferAttribute(colArr,3)); g.setIndex(idxArr); g.computeVertexNormals(); return g;
+}
+export function createEndless(scene){
+  const T=makeTextures();
+  const tiles=new Map(); const shrines=[];
+  const groundMat=textured(T.grass, 0xffffff, 14, 14, 1); groundMat.vertexColors=true;
+  const barkMat=textured(T.bark, 0xffffff, 1, 2, 0.95);
+  const leafMats={ green:textured(T.leaves,0xffffff,2,2,0.9), snow:textured(T.leavesSnow,0xffffff,2,2,0.9), autumn:textured(T.leavesAutumn,0xffffff,2,2,0.9), blossom:textured(T.leavesBlossom,0xffffff,2,2,0.9) };
+  const rockMat=textured(T.rock, 0xffffff, 1, 1, 0.95);
+  const tuftGeo=makeTuftGeo(); const tuftMat=new THREE.MeshStandardMaterial({vertexColors:true, roughness:1, side:THREE.DoubleSide});
+  const stoneMat=textured(T.rock, 0xd8d2c2, 1, 1, 0.95);
+  const glowMat=new THREE.MeshStandardMaterial({color:0x7ef0d4, emissive:0x2fd4ae, emissiveIntensity:1.7, roughness:0.25});
+  const dummy=new THREE.Object3D();
+  function buildTile(tx,tz){
+    const cx=tx*TILE, cz=tz*TILE; const g=new THREE.Group();
+    const geo=new THREE.PlaneGeometry(TILE,TILE,36,36); geo.rotateX(-Math.PI/2);
+    const pos=geo.attributes.position, colors=[];
+    const cGrass=new THREE.Color(0xffffff), cMeadow=new THREE.Color(0xe6f2b8), cDry=new THREE.Color(0xd8e6b0), cRock=new THREE.Color(0xb9bec6), cStrata=new THREE.Color(0xd8c2a0), cSnow=new THREE.Color(0xffffff), cSand=new THREE.Color(0xf2e2b0);
+    for(let i=0;i<pos.count;i++){ const wx=cx+pos.getX(i), wz=cz+pos.getZ(i), h=terrainHeight(wx,wz); pos.setY(i,h);
+      const patch=noise(wx*0.0016+40, wz*0.0016+40);
+      let c= h>34? cSnow : h>22? ((Math.floor(h/7)%2===0)? cRock:cStrata) : h>13? cDry : (patch>0.55? cMeadow:cGrass);
+      if(h<2.2) c=cSand; colors.push(c.r,c.g,c.b); }
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(colors,3)); geo.computeVertexNormals();
+    const ground=new THREE.Mesh(geo, groundMat); ground.position.set(cx,0.12,cz); ground.receiveShadow=true; g.add(ground);
+    // seeded scatter
+    let s=(Math.imul(tx,73856093)^Math.imul(tz,19349663))>>>0; const rnd=()=>{ s=(s*1664525+1013904223)>>>0; return s/4294967296; };
+    const tag="tile:"+tx+","+tz;
+    for(let i=0;i<17;i++){ const x=cx+(rnd()*2-1)*(TILE/2-14), z=cz+(rnd()*2-1)*(TILE/2-14); const h=terrainHeight(x,z); const biome=biomeAt(x,z,h);
+      if(rnd()<0.3){ const sc=1+rnd()*2.6; const rock=new THREE.Mesh(new THREE.SphereGeometry(sc,12,9), rockMat); rock.scale.y=0.7; rock.position.set(x,h+sc*0.15,z); rock.castShadow=true; g.add(rock); addTaggedCollider(tag,{x,z,r:sc*0.95}); }
+      else { const sc=0.9+rnd()*0.9; const tree=new THREE.Group();
+        const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.42*sc,0.75*sc,5*sc,8), barkMat); trunk.position.y=2.5*sc; trunk.castShadow=true; tree.add(trunk);
+        const lm=leafMats[biome]||leafMats.green;
+        if(biome==="snow"&&rnd()<0.8){ for(let k=0;k<3;k++){ const cone=new THREE.Mesh(new THREE.ConeGeometry((2.9-k*0.55)*sc,3.2*sc,10), lm); cone.position.y=(4.8+k*1.8)*sc; tree.add(cone); } }
+        else for(let k=0;k<3;k++){ const c=new THREE.Mesh(new THREE.SphereGeometry((2.1+rnd()*1.1)*sc,12,9), lm); c.position.set((rnd()*2-1)*1.5*sc,(5.6+rnd()*2)*sc,(rnd()*2-1)*1.5*sc); c.castShadow=true; tree.add(c); }
+        tree.position.set(x,h-0.2,z); tree.rotation.y=rnd()*3; g.add(tree); addTaggedCollider(tag,{x,z,r:1.1}); } }
+    // grass tufts
+    const tufts=new THREE.InstancedMesh(tuftGeo, tuftMat, 240); let tp=0, guard=0;
+    while(tp<240 && guard++<900){ const x=cx+(rnd()*2-1)*(TILE/2-8), z=cz+(rnd()*2-1)*(TILE/2-8); const h=terrainHeight(x,z); if(h>16) continue;
+      dummy.position.set(x,h-0.1,z); dummy.rotation.set(0,rnd()*3,0); dummy.scale.setScalar(0.85+rnd()); dummy.updateMatrix(); tufts.setMatrixAt(tp++, dummy.matrix); }
+    tufts.count=tp; tufts.instanceMatrix.needsUpdate=true; g.add(tufts);
+    // occasional places: a ruin, or a brazier shrine (puzzle included)
+    const roll=rnd();
+    if(roll<0.10){ for(let ci=0;ci<3;ci++){ const hgt=[6.5,4,2.2][ci]; const col=new THREE.Mesh(new THREE.CylinderGeometry(1.4,1.6,hgt,9), stoneMat);
+        const lx=(ci-1)*4.6, lz=(ci%2)*2-1; col.position.set(cx+lx, terrainHeight(cx+lx,cz+lz)+hgt/2, cz+lz); col.castShadow=true; g.add(col); addTaggedCollider(tag,{x:cx+lx,z:cz+lz,r:1.9}); } }
+    else if(roll<0.16){ const sy=terrainHeight(cx,cz); const shrine={x:cx, z:cz, y:sy, type:"braziers", solved:false, endless:true, tileKey:tx+","+tz, braziers:[]};
+      const plat=new THREE.Mesh(new THREE.CylinderGeometry(8,9,1.2,14), stoneMat); plat.position.set(cx,sy+0.4,cz); g.add(plat);
+      const crystal=new THREE.Mesh(new THREE.OctahedronGeometry(1.4), glowMat); crystal.position.set(cx,sy+7,cz); crystal.scale.y=1.5; g.add(crystal); shrine.crystal=crystal;
+      for(let bi=0;bi<3;bi++){ const ba=bi/3*Math.PI*2+tx, bx=cx+Math.cos(ba)*13, bz=cz+Math.sin(ba)*13, by=terrainHeight(bx,bz);
+        const bowl=new THREE.Mesh(new THREE.CylinderGeometry(1.5,0.9,1.6,9), stoneMat); bowl.position.set(bx,by+0.8,bz); g.add(bowl);
+        const flame=new THREE.Mesh(new THREE.ConeGeometry(0.85,2.6,7), new THREE.MeshStandardMaterial({color:0xffa657, emissive:0xff8830, emissiveIntensity:2.2, transparent:true, opacity:0.92}));
+        flame.position.set(bx,by+2.8,bz); flame.visible=false; g.add(flame); addTaggedCollider(tag,{x:bx,z:bz,r:1.4});
+        shrine.braziers.push({x:bx,z:bz,flame,lit:false}); }
+      shrines.push(shrine); }
+    scene.add(g);
+    return {group:g, tag};
+  }
+  function update(px,pz){
+    const ctx=Math.round(px/TILE), ctz=Math.round(pz/TILE); const want=new Set();
+    for(let dx=-2;dx<=2;dx++) for(let dz=-2;dz<=2;dz++){ const tx=ctx+dx, tz=ctz+dz; const cx=tx*TILE, cz=tz*TILE;
+      if(Math.abs(cx)+TILE/2<=WORLD_SIZE/2 && Math.abs(cz)+TILE/2<=WORLD_SIZE/2) continue; // fully inside the homeland — its own ground covers it (edge tiles overlap a step, no void ring)
+      want.add(tx+","+tz); }
+    for(const [k,t] of [...tiles]){ if(!want.has(k)){ scene.remove(t.group); removeTaggedColliders(t.tag);
+      for(let i=shrines.length-1;i>=0;i--) if(shrines[i].tileKey===k) shrines.splice(i,1);
+      tiles.delete(k); } }
+    for(const k of want){ if(!tiles.has(k)){ const [tx,tz]=k.split(",").map(Number); tiles.set(k, buildTile(tx,tz)); } }
+  }
+  return { update, shrines };
 }
