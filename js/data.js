@@ -70,6 +70,10 @@ export const WEAPONS = [
   W("Blade of the First Vale","Blade",55,"blade",0xfff2b0,"Legendary practice blade of Aetheria's first Knight."),
   W("Wand of the Arch-Scholar","Wand",58,"wand",0xa0b8ff,"Hums with a library's worth of friendly spells."),
   W("Staff of Seasons","Staff",60,"staff",0x9be67a,"Spring at one end, autumn at the other."),
+  W("Ocean Pearl Staff","Staff",36,"staff",0x58c6ff,"Its pearl hums with the tide — press Q to send a Wave Surge crashing forward."),
+  W("Tidecaller Wand","Wand",28,"wand",0x3fa7e0,"Calls little waves wherever it points."),
+  W("Emberheart Staff","Staff",40,"staff",0xff8a5c,"A warm ember glows at its heart — press Q for a Comet Blast."),
+  W("Glacier Crystal Staff","Staff",46,"staff",0xcfeeff,"A shard of friendly glacier — press Q for a Crystal Volley."),
 ];
 // Procedural expansion: materials × bases = hundreds of distinct findable weapons
 const MATS=[["Pine",1],["Oak",1.15],["Copper",1.3],["Silver",1.5],["Crystal",1.75],["Starmetal",2.1]];
