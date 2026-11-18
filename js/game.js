@@ -4,7 +4,7 @@
 import * as THREE from "three";
 import { CLASSES, WEAPONS, ARMOR, SPELLS, SPELL_BY_NAME, ENEMIES, VILLAGES, MAIN_QUESTS, NPC_NAMES, NPC_LINES,
   RARITIES, MODIFIERS, rollRarity, proceduralWeapon, proceduralArmor, makeSideQuest } from "./data.js";
-import { buildWorld, terrainHeight, collide, WORLD_SIZE } from "./world.js";
+import { buildWorld, terrainHeight, collide, addTaggedCollider, removeTaggedColliders, WORLD_SIZE } from "./world.js";
 import { Room } from "./multiplayer.js";
 import { makeItemModel, SPELL_FX, makeSpellProjectile } from "./models.js";
 
@@ -153,6 +153,7 @@ function spawnNPCs(){
   });
 }
 function spawnCamps(){
+  removeTaggedColliders("camp");
   camps.forEach(c=>{ scene.remove(c.group); scene.remove(c.chestMesh); });
   enemies.forEach(e=>{ if(e.camp!==undefined && e.camp>=0) scene.remove(e.mesh); });
   camps=[]; chests=[]; enemies=enemies.filter(e=>e.camp===undefined||e.camp<0);
@@ -171,6 +172,8 @@ function spawnCamps(){
     chestMesh.position.set(x-5, terrainHeight(x-5,z+3), z+3); scene.add(chestMesh);
     const chest={x:x-5, z:z+3, mesh:chestMesh, opened:false, camp:i}; chests.push(chest);
     camps.push({x,z,y,group:g,chestMesh});
+    addTaggedCollider("camp", {x, z, r:5.4});            // tent is solid
+    addTaggedCollider("camp", {x:x-5, z:z+3, r:2.1});    // and so is its chest
     const n=3+Math.floor(Math.random()*3);
     for(let k=0;k<n;k++){ const et=ENEMIES[Math.floor(Math.random()*Math.min(ENEMIES.length, 3+Math.floor(P.level/3)))]; spawnEnemy(et, x+rand(-13,13), z+rand(-13,13), i); }
   }
