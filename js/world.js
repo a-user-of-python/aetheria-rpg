@@ -155,9 +155,12 @@ export function buildWorld(scene){
   const caves=[]; const caveSpots=[[-260,240],[300,-180],[-880,-160],[180,820],[820,240],[-380,-760]];
   for(const [cx,cz] of caveSpots){
     const cg=new THREE.Group(); const cy=terrainHeight(cx,cz);
+    const yaw=Math.atan2(-cx,-cz); // cg.lookAt(0,cy,0) rotation, so local +x maps to (cos yaw, 0, -sin yaw)
     for(let i=0;i<8;i++){ const a=(i/8)*Math.PI; const r=new THREE.Mesh(new THREE.SphereGeometry(4.6,16,12), rockMat);
       const pp=r.geometry.attributes.position; for(let vi=0;vi<pp.count;vi++){ const f=0.85+hash(vi,i)*0.3; pp.setXYZ(vi,pp.getX(vi)*f,pp.getY(vi)*f,pp.getZ(vi)*f); }
-      r.position.set(Math.cos(a)*9.5, Math.sin(a)*8.5, 0); r.castShadow=true; cg.add(r); COLLIDERS.push({x:cx+Math.cos(a)*9.5*Math.cos(Math.atan2(0-cz,0-cx)), z:cz, r:3.4}); }
+      r.position.set(Math.cos(a)*9.5, Math.sin(a)*8.5, 0); r.castShadow=true; cg.add(r);
+      // colliders only for the ground-level jamb rocks — the arch stones overhead must not become a phantom wall
+      if(Math.sin(a)*8.5 < 3.5) COLLIDERS.push({x:cx+Math.cos(a)*9.5*Math.cos(yaw), z:cz-Math.cos(a)*9.5*Math.sin(yaw), r:3.4}); }
     const glow=new THREE.Mesh(new THREE.SphereGeometry(1.1,16,12), new THREE.MeshStandardMaterial({color:0xaee9ff, emissive:0x66ccff, emissiveIntensity:1.6}));
     glow.position.set(0,2,-5); cg.add(glow);
     cg.position.set(cx,cy,cz); cg.lookAt(0,cy,0); group.add(cg); caves.push({x:cx,z:cz,y:cy});
@@ -177,6 +180,9 @@ export function buildWorld(scene){
   scene.add(group);
   return { villages, caves, towerPos:{x:tx,z:tz,y:ty}, orb };
 }
+// Tagged colliders can be removed again (e.g. camps rebuilt at a new density).
+export function addTaggedCollider(tag, c){ c.tag=tag; COLLIDERS.push(c); return c; }
+export function removeTaggedColliders(tag){ for(let i=COLLIDERS.length-1;i>=0;i--) if(COLLIDERS[i].tag===tag) COLLIDERS.splice(i,1); }
 // Resolve collisions: push a point (with radius pr) out of every nearby collider.
 export function collide(p, pr=1.2){
   for(const c of COLLIDERS){ const dx=p.x-c.x, dz=p.z-c.z; const rr=c.r+pr; const d2=dx*dx+dz*dz;
