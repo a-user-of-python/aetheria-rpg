@@ -86,10 +86,15 @@ function attachWeapon(rig, item){
   while(rig.weaponMount.children.length) rig.weaponMount.remove(rig.weaponMount.children[0]);
   if(!item) return;
   const m=makeItemModel(item); m.scale.setScalar(0.85);
-  // Held weapons point FORWARD from the fist (perpendicular to the forearm) so a
-  // swing sweeps the blade through the target. Bows and lutes are held upright.
-  if(item.shape==="bow"||item.shape==="lute") m.rotation.set(0,0,0);
-  else m.rotation.x=Math.PI/2;
+  // Per-shape CARRY POSE in the fist (mount sits on the arm at the hand):
+  //  blade/hammer/wand point forward from the fist, so a swing sweeps through foes;
+  //  a staff is gripped mid-shaft and carried upright; a bow is turned so its
+  //  nocked arrow faces forward; a lute hangs at the hand ready to strum.
+  const shape=item.shape||"wand";
+  if(shape==="staff"){ m.position.y=-1.7; }
+  else if(shape==="bow"){ m.rotation.y=-Math.PI/2; }
+  else if(shape==="lute"){ m.position.y=-0.6; }
+  else { m.rotation.x=Math.PI/2; }
   rig.weaponMount.add(m);
 }
 let atkAnimStart=0, castAnimStart=0;
@@ -110,6 +115,11 @@ function animateRig(rig, speedNorm, dt, running=false){
     if(castAnimStart){ const t=nowMs-castAnimStart; // raise the weapon hand toward the target and pulse
       if(t<320){ rig.armR.rotation.x=-1.55+Math.sin(t/320*Math.PI)*0.25; return; }
       castAnimStart=0;
+    }
+    if(slamStart){ const t=nowMs-slamStart; // wind high overhead, then slam down hard
+      if(t<170){ rig.armR.rotation.x=1.1*(t/170)-0.35; return; }
+      if(t<300){ rig.armR.rotation.x=0.75-3.1*((t-170)/130); return; }
+      slamStart=0;
     }
   }
 }
@@ -145,8 +155,10 @@ function initPreview(){
   preview.canvas=preview.renderer.domElement; preview.canvas.style.display="block"; preview.canvas.style.margin="0 auto";
 }
 function itemAttrHTML(it, price){
+  const ab=it.kind==="weapon"? weaponAbilityFor(it):null;
   return `<b style="color:${RARITIES[it.rarity]?.color||'#fff'}">${it.name}</b> <small>[${it.rarity}]</small><br>`+
     `${it.kind==="weapon"? `Type: ${it.type} · <b>Power ${it.power}</b>` : `Slot: ${it.slot} · <b>Armour ${it.armor}</b>`}`+
+    `${ab? `<br>${ab.icon} <b>Ability: ${ab.name}</b> — <small>${ab.desc} (press Q)</small>`:""}`+
     `${it.modifier? `<br>Modifier: <b>${it.modifier.name}</b> — ${it.modifier.desc}`:""}`+
     `<br><small>${it.desc||""}</small>${price? `<br><b>Price: 🪙 ${price}</b>`:""}`;
 }
@@ -390,6 +402,60 @@ function damagePlayer(raw){
   burst(P.pos.x,P.pos.y+4,P.pos.z,0xff9e9e,8); updateHUD();
   if(P.hp<=0){ P.hp=P.hpMax; P.mana=P.manaMax; P.pos.set(0,0,90); toast("You poofed into stars and woke up safe in Valebrook. No harm done!"); }
 }
+// ---------- Weapon abilities: your weapon grants an ability by what it IS ----------
+// A blade spins, a hammer slams, a bow volleys — and a staff/wand casts the
+// element in its name (an Ocean Staff really does shoot waves).
+let abilityCdUntil=0, spinStart=0, spinBaseRy=0, slamStart=0;
+function weaponAbilityFor(item){
+  if(!item||item.kind!=="weapon") return null;
+  const n=(item.name||"").toLowerCase(); const shape=item.shape||"wand";
+  if(shape==="blade") return {id:"spin", icon:"🌀", name:"Whirlwind Spin", desc:"Spin in a full circle, hitting every foe around you for 160% weapon damage."};
+  if(shape==="hammer") return {id:"slam", icon:"💥", name:"Star Slam", desc:"Slam the ground: a shockwave hits every foe within 8 for 200% weapon damage."};
+  if(shape==="bow") return {id:"volley", icon:"🏹", name:"Triple Volley", desc:"Loose three arrows in a fan, each for 90% weapon damage."};
+  if(shape==="lute") return {id:"song", icon:"🎵", name:"Healing Song", desc:"Strum a chord that restores 30% of your HP in a swirl of notes."};
+  if(/ocean|water|river|wave|tide|sea/.test(n)) return {id:"wave", icon:"🌊", name:"Wave Surge", desc:"Send a rolling wave crashing forward — it pierces through every foe in its path for 180% damage."};
+  if(/frost|ice|snow|crystal|winter/.test(n)) return {id:"shards", icon:"❄️", name:"Crystal Volley", desc:"Fan five frost shards forward, each for 70% weapon damage."};
+  if(/ember|fire|sun|flame|solar/.test(n)) return {id:"fireball", icon:"☄️", name:"Comet Blast", desc:"Hurl a comet that explodes on impact for 220% damage plus splash."};
+  if(/leaf|bloom|forest|wood|thorn|vine|tree|season|meadow/.test(n)) return {id:"leafstorm", icon:"🍃", name:"Leaf Storm", desc:"A whirl of sharp petals strikes every foe within 8 for 130% damage."};
+  if(/moon|star|night|comet/.test(n)) return {id:"starfall", icon:"⭐", name:"Starfall", desc:"Call five stars down onto the nearest foes for 110% damage each."};
+  return {id:"bolt", icon:"✨", name:"Spark Volley", desc:"Three spark bolts streak where you face, each for 80% weapon damage."};
+}
+function abilityDamage(mult){ return (P.baseDmg+(P.weapon?P.weapon.power:0))*mult; }
+function useAbility(){
+  const ab=weaponAbilityFor(P.weapon); if(!ab||!started) return;
+  if(Date.now()<abilityCdUntil){ toast("Ability recharging… "+Math.ceil((abilityCdUntil-Date.now())/1000)+"s"); return; }
+  if(P.mana<15){ toast("Not enough mana for "+ab.name+" (needs 15)"); return; }
+  P.mana-=15; abilityCdUntil=Date.now()+6000; lastCastAt=Date.now();
+  const ry=playerMesh.rotation.y, fwd=new THREE.Vector3(Math.sin(ry),0,Math.cos(ry));
+  const spawnY=P.pos.y+4.4;
+  const fireDir=(dir, fx, dmg, opts={})=>{ const mesh=makeSpellProjectile(fx); mesh.position.set(P.pos.x+dir.x*1.6, spawnY, P.pos.z+dir.z*1.6); scene.add(mesh);
+    projectiles.push({mesh, target:null, dir:dir.clone(), speed:opts.speed||55, dmg, fx, trailCd:0, travelled:0, pierce:!!opts.pierce, splash:opts.splash||0, hitSet:new Set()}); };
+  if(ab.id==="spin"){ spinStart=performance.now(); spinBaseRy=ry;
+    ringFX(P.pos.x, P.pos.y+1.2, P.pos.z, P.weapon.color||0xffe27a, 7, 0.5);
+    setTimeout(()=>{ [...enemies].forEach(e=>{ if(Math.hypot(e.x-P.pos.x,e.z-P.pos.z)<7) hitEnemy(e, abilityDamage(1.6)); }); if(boss&&Math.hypot(boss.x-P.pos.x,boss.z-P.pos.z)<7.5) hitEnemy(boss, abilityDamage(1.6)); },200);
+  } else if(ab.id==="slam"){ slamStart=performance.now();
+    setTimeout(()=>{ ringFX(P.pos.x, P.pos.y+0.7, P.pos.z, 0xd8c2a0, 9, 0.6); burst(P.pos.x,P.pos.y+1,P.pos.z,0xc9b18a,26);
+      [...enemies].forEach(e=>{ if(Math.hypot(e.x-P.pos.x,e.z-P.pos.z)<8.5) hitEnemy(e, abilityDamage(2.0)); }); if(boss&&Math.hypot(boss.x-P.pos.x,boss.z-P.pos.z)<9) hitEnemy(boss, abilityDamage(2.0)); },280);
+  } else if(ab.id==="volley"){ castAnimStart=performance.now();
+    for(const off of [-0.18,0,0.18]){ const d=fwd.clone(); const cs=Math.cos(off), sn=Math.sin(off); fireDir(new THREE.Vector3(d.x*cs-d.z*sn,0,d.x*sn+d.z*cs), {geo:"shard", color:0xd8c9a3, size:0.55}, abilityDamage(0.9), {speed:75}); }
+  } else if(ab.id==="wave"){ castAnimStart=performance.now(); fireDir(fwd, {geo:"wave", color:0x58c6ff, size:1.7}, abilityDamage(1.8), {speed:38, pierce:true});
+  } else if(ab.id==="shards"){ castAnimStart=performance.now();
+    for(const off of [-0.3,-0.15,0,0.15,0.3]){ const d=fwd.clone(); const cs=Math.cos(off), sn=Math.sin(off); fireDir(new THREE.Vector3(d.x*cs-d.z*sn,0,d.x*sn+d.z*cs), {geo:"shard", color:0xaee9ff, size:0.8}, abilityDamage(0.7), {speed:62}); }
+  } else if(ab.id==="fireball"){ castAnimStart=performance.now(); fireDir(fwd, {geo:"comet", color:0xffa657, size:1.35}, abilityDamage(2.2), {speed:60, splash:5});
+  } else if(ab.id==="leafstorm"){ castAnimStart=performance.now(); ringFX(P.pos.x,P.pos.y+1.5,P.pos.z,0x7ee787,8.5,0.6); burst(P.pos.x,P.pos.y+4,P.pos.z,0x7ee787,30);
+    [...enemies].forEach(e=>{ if(Math.hypot(e.x-P.pos.x,e.z-P.pos.z)<8.5) hitEnemy(e, abilityDamage(1.3)); }); if(boss&&Math.hypot(boss.x-P.pos.x,boss.z-P.pos.z)<9) hitEnemy(boss, abilityDamage(1.3));
+  } else if(ab.id==="starfall"){ castAnimStart=performance.now();
+    const foes=[...enemies].sort((a,b)=>Math.hypot(a.x-P.pos.x,a.z-P.pos.z)-Math.hypot(b.x-P.pos.x,b.z-P.pos.z)).slice(0,5);
+    if(boss) foes.push(boss);
+    if(!foes.length){ toast("No foes near enough for Starfall — the stars fade."); abilityCdUntil=Date.now()+1500; }
+    foes.forEach((e,i)=>{ setTimeout(()=>{ if(enemies.includes(e)||e===boss){ ringFX(e.x, e.mesh.position.y+0.5, e.z, 0xffe27a, 3.6, 0.45); burst(e.x, e.mesh.position.y+6, e.z, 0xffe27a, 14); hitEnemy(e, abilityDamage(1.1)); } }, 200+i*140); });
+  } else if(ab.id==="song"){ castAnimStart=performance.now(); const heal=P.hpMax*0.3; P.hp=Math.min(P.hpMax,P.hp+heal);
+    ringFX(P.pos.x,P.pos.y+1.2,P.pos.z,0xff9ecb,6,0.7); burst(P.pos.x,P.pos.y+4.5,P.pos.z,0xff9ecb,22); toast("🎵 Healing Song restored "+Math.round(heal)+" HP"); updateHUD();
+  } else { castAnimStart=performance.now();
+    for(const off of [-0.12,0,0.12]){ const d=fwd.clone(); const cs=Math.cos(off), sn=Math.sin(off); fireDir(new THREE.Vector3(d.x*cs-d.z*sn,0,d.x*sn+d.z*cs), {geo:"star", color:P.weapon.color||0xffe27a, size:0.7}, abilityDamage(0.8), {speed:70}); } }
+  updateHUD();
+}
+
 // ---------- Interaction ----------
 let nearThing=null;
 function findNear(){
@@ -436,6 +502,9 @@ function updateHUD(){
   $("spellBar").innerHTML=P.spells.slice(0,6).map((s,i)=>`<button class="spellBtn" data-s="${s}">${i+1} ${s}</button>`).join("");
   document.querySelectorAll(".spellBtn").forEach(b=>b.onclick=()=>castSpell(b.dataset.s));
   $("equipLine").innerHTML=`⚔ <span style="color:${P.weapon?RARITIES[P.weapon.rarity]?.color:'#fff'}">${P.weapon?P.weapon.name:"Bare hands"}</span>${P.armorItem?` · 🛡 <span style="color:${RARITIES[P.armorItem.rarity]?.color}">${P.armorItem.name}</span>`:""}`;
+  const ab=weaponAbilityFor(P.weapon); const cdLeft=Math.max(0,Math.ceil((abilityCdUntil-Date.now())/1000));
+  $("abilityChip").textContent= ab? `${ab.icon} ${ab.name} — ${cdLeft>0? "⏳ "+cdLeft+"s":"Q / tap Ability"}` : "";
+  $("abilityChip").style.display= ab? "block":"none";
 }
 function renderQuests(){
   const mq=currentMain();
@@ -500,7 +569,7 @@ function renderSpellbook(){
       return `<div class="spellCard" style="border-color:#${(fx.color||0xffe27a).toString(16).padStart(6,"0")}"><div class="spellIco">${SCHOOL_ICON[s.school]||"✨"}</div><b>${n}</b> ${i<6?`<span class="hotkey">${i+1}</span>`:`<button data-front="${n}">Put on hotbar</button>`}<br><small>${s.school} · Mana ${s.cost}${s.power?` · Power ${s.power}`:""}<br>${s.desc}</small></div>`; }).join("")+
     `</div><h4>Spell Pages — learn new spells you earned from quests</h4>`+
     (pages.length? pages.map(p=>`<div class="q">📜 <b>${p.spell}</b> — ${SPELL_BY_NAME[p.spell]?.desc||""} <button data-learn="${p.uid}">Learn</button></div>`).join("") : "<p><small>No spell pages yet — completing quests often rewards one.</small></p>")+
-    `<h4>⌨️ Keybinds</h4><p class="keys">WASD move · <b>Shift</b> sprint · <b>Mouse click / Space</b> attack · <b>E</b> talk / open / use · <b>1–6</b> cast hotbar spell · <b>I</b> inventory · <b>B</b> spellbook · <b>M</b> world map · <b>\`</b> dev mode · <b>Esc</b> close panels · Drag mouse to look, wheel to zoom</p>`;
+    `<h4>⌨️ Keybinds</h4><p class="keys">WASD move · <b>Shift</b> sprint · <b>Mouse click / Space</b> attack · <b>Q</b> weapon ability · <b>E</b> talk / open / use · <b>1–6</b> cast hotbar spell · <b>I</b> inventory · <b>B</b> spellbook · <b>M</b> world map · <b>\`</b> dev mode · <b>Esc</b> close panels · Drag mouse to look, wheel to zoom</p>`;
   document.querySelectorAll("[data-learn]").forEach(b=>b.onclick=()=>{ const p=P.inventory.find(x=>x.uid==b.dataset.learn); if(p) learnSpell(p); });
   document.querySelectorAll("[data-front]").forEach(b=>b.onclick=()=>{ const n=b.dataset.front; P.spells=P.spells.filter(x=>x!==n); P.spells.unshift(n); renderSpellbook(); updateHUD(); });
 }
@@ -626,6 +695,7 @@ addEventListener("keydown",e=>{ keys[e.key.toLowerCase()]=true;
   if(e.key==="e"||e.key==="E") interact();
   if(e.key==="i"||e.key==="I"||e.key==="Tab"){ e.preventDefault(); const p=$("inventory"); const opening=p.style.display!=="block"; p.style.display=opening?"block":"none"; preview.active=opening; if(opening) renderInventory(); }
   if(e.key===" "){ e.preventDefault(); attack(); }
+  if(e.key==="q"||e.key==="Q") useAbility();
   const n=parseInt(e.key); if(n>=1&&n<=6&&P.spells[n-1]) castSpell(P.spells[n-1]);
   if(e.key==="b"||e.key==="B"){ const bk=$("spellbook"); const opening=bk.style.display!=="block"; bk.style.display=opening?"block":"none"; if(opening) renderSpellbook(); }
   if(e.key==="m"||e.key==="M"){ const mp=$("mapModal"); if(mp.style.display==="block") mp.style.display="none"; else openMap(); }
@@ -633,7 +703,7 @@ addEventListener("keydown",e=>{ keys[e.key.toLowerCase()]=true;
   if(e.key==="`") $("dev").style.display=$("dev").style.display==="block"?"none":"block";
 });
 addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
-$("atkBtn").onclick=attack; $("intBtn").onclick=interact;
+$("atkBtn").onclick=attack; $("abilBtn").onclick=()=>useAbility(); $("intBtn").onclick=interact;
 $("invBtn").onclick=()=>{ const p=$("inventory"); const opening=p.style.display!=="block"; p.style.display=opening?"block":"none"; preview.active=opening; if(opening) renderInventory(); };
 $("invClose").onclick=()=>{ $("inventory").style.display="none"; preview.active=false; };
 $("sprBtn").addEventListener("pointerdown",e=>{ e.preventDefault(); sprintTouch=true; });
@@ -668,6 +738,8 @@ function animate(){
   const ground=terrainHeight(P.pos.x,P.pos.z);
   P.pos.y += (ground-P.pos.y)*Math.min(1,dt*10);
   playerMesh.position.copy(P.pos);
+  if(spinStart){ const t=performance.now()-spinStart; // Whirlwind Spin: one full turn in 0.45s
+    if(t<450) playerMesh.rotation.y=spinBaseRy + (t/450)*Math.PI*2; else { playerMesh.rotation.y=spinBaseRy; spinStart=0; } }
   animateRig(playerRig, isMoving? (sprinting?1.35:0.8):0, dt, sprinting&&isMoving);
   // sprint FOV kick so you can FEEL it
   const targetFov=(sprinting&&isMoving)? 73:62;
@@ -684,6 +756,7 @@ function animate(){
   $("hpWrap").classList.toggle("cond", !(P.hp<P.hpMax-0.5||inCombat));
   $("manaWrap").classList.toggle("cond", !(P.mana<P.manaMax-0.5||Date.now()-lastCastAt<4000));
   $("xpWrap").classList.toggle("cond", !(Date.now()-lastXpAt<5000));
+  { const abNow=weaponAbilityFor(P.weapon); if(abNow){ const cd=Math.max(0,Math.ceil((abilityCdUntil-Date.now())/1000)); $("abilityChip").textContent=`${abNow.icon} ${abNow.name} — ${cd>0?"⏳ "+cd+"s":"Q / tap Ability"}`; } }
   const tf=$("targetFrame");
   if(lastTarget && (enemies.includes(lastTarget)||lastTarget===boss) && lastTarget.hp>0 && Date.now()-lastTargetAt<7000){
     tf.style.display="block"; $("tfName").textContent=(lastTarget.boss?"👑 ":"")+lastTarget.type;
@@ -730,10 +803,12 @@ function animate(){
       dir.normalize(); pr.mesh.position.addScaledVector(dir, pr.speed*dt); pr.mesh.lookAt(dest);
     } else {
       pr.mesh.position.addScaledVector(pr.dir, pr.speed*dt); pr.travelled+=pr.speed*dt;
-      let hit=null; for(const e of enemies){ if(Math.hypot(e.x-pr.mesh.position.x, e.z-pr.mesh.position.z)<3 && Math.abs(e.mesh.position.y+3-pr.mesh.position.y)<4){ hit=e; break; } }
-      if(!hit && boss && Math.hypot(boss.x-pr.mesh.position.x, boss.z-pr.mesh.position.z)<4) hit=boss;
-      if(hit){ ringFX(pr.mesh.position.x, pr.mesh.position.y-1, pr.mesh.position.z, pr.fx.color, 4.2, 0.5); hitEnemy(hit, pr.dmg); kill(); continue; }
-      if(pr.travelled>75){ kill(); continue; }
+      let hit=null; for(const e of enemies){ if(pr.hitSet&&pr.hitSet.has(e)) continue; if(Math.hypot(e.x-pr.mesh.position.x, e.z-pr.mesh.position.z)<3 && Math.abs(e.mesh.position.y+3-pr.mesh.position.y)<4){ hit=e; break; } }
+      if(!hit && boss && !(pr.hitSet&&pr.hitSet.has(boss)) && Math.hypot(boss.x-pr.mesh.position.x, boss.z-pr.mesh.position.z)<4) hit=boss;
+      if(hit){ ringFX(pr.mesh.position.x, pr.mesh.position.y-1, pr.mesh.position.z, pr.fx.color, 4.2, 0.5); hitEnemy(hit, pr.dmg);
+        if(pr.splash){ [...enemies].forEach(e=>{ if(e!==hit&&Math.hypot(e.x-hit.x,e.z-hit.z)<pr.splash) hitEnemy(e, pr.dmg*0.6); }); burst(pr.mesh.position.x, pr.mesh.position.y, pr.mesh.position.z, pr.fx.color, 22); }
+        if(pr.pierce){ pr.hitSet.add(hit); } else { kill(); continue; } }
+      if(pr.travelled>75){ if(pr.splash) burst(pr.mesh.position.x, pr.mesh.position.y, pr.mesh.position.z, pr.fx.color, 16); kill(); continue; }
     }
     pr.mesh.rotation.x+=dt*7; pr.mesh.rotation.z+=dt*5;
     pr.trailCd-=dt; if(pr.trailCd<=0){ pr.trailCd=0.03; const tr=new THREE.Mesh(new THREE.SphereGeometry(0.22,8,6), new THREE.MeshStandardMaterial({color:pr.fx.color, emissive:pr.fx.color, emissiveIntensity:1.2, transparent:true, opacity:0.7}));
