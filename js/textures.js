@@ -14,7 +14,19 @@ export function makeTextures(){
   T.snow = cnv(256,(g,s)=>{ speckle(g,s,"#eef4fb",["#ffffff","#dde9f5","#e2ecf8"],1800);
     g.fillStyle="rgba(255,255,255,.9)"; for(let i=0;i<90;i++){ g.fillRect(Math.random()*s,Math.random()*s,2,2); } });
   T.rock = cnv(256,(g,s)=>{ speckle(g,s,"#8d9299",["#7a7f87","#9aa0a8","#6e737c"],2200);
-    g.strokeStyle="rgba(50,54,60,.45)"; g.lineWidth=1.4; for(let i=0;i<26;i++){ g.beginPath(); let x=Math.random()*s,y=Math.random()*s; g.moveTo(x,y); for(let k=0;k<4;k++){ x+=Math.random()*36-18; y+=Math.random()*36-18; g.lineTo(x,y); } g.stroke(); } });
+    // soft weathered blotches + faint strata bands (no hard line-work)
+    for(let i=0;i<40;i++){ const x=Math.random()*s,y=Math.random()*s,r=14+Math.random()*36; const gr=g.createRadialGradient(x,y,2,x,y,r);
+      gr.addColorStop(0,"rgba(60,64,72,.20)"); gr.addColorStop(1,"rgba(60,64,72,0)"); g.fillStyle=gr; g.beginPath(); g.arc(x,y,r,0,7); g.fill(); }
+    g.fillStyle="rgba(255,255,255,.06)"; for(let y=18;y<s;y+=52){ g.fillRect(0,y,s,7); } });
+  T.grassBlade = cnv(128,(g,s)=>{ g.clearRect(0,0,s,s);
+    for(let i=0;i<26;i++){ const x=6+Math.random()*(s-12); const sway=(Math.random()*16-8); const hgt=s*0.55+Math.random()*s*0.45;
+      const grad=g.createLinearGradient(0,s,0,s-hgt); grad.addColorStop(0,"#3e7d3c"); grad.addColorStop(1,"#79c76e");
+      g.strokeStyle=grad; g.lineWidth=3.4; g.beginPath(); g.moveTo(x,s); g.quadraticCurveTo(x+sway*0.3, s-hgt*0.6, x+sway, s-hgt); g.stroke(); } });
+  T.grassBlade.wrapS=T.grassBlade.wrapT=THREE.ClampToEdgeWrapping;
+  T.cloud = cnv(256,(g,s)=>{ g.clearRect(0,0,s,s);
+    for(let i=0;i<26;i++){ const x=s*0.5+(Math.random()*2-1)*s*0.3, y=s*0.55+(Math.random()*2-1)*s*0.16, r=22+Math.random()*44;
+      const gr=g.createRadialGradient(x,y,2,x,y,r); gr.addColorStop(0,"rgba(255,255,255,.55)"); gr.addColorStop(1,"rgba(255,255,255,0)"); g.fillStyle=gr; g.beginPath(); g.arc(x,y,r,0,7); g.fill(); } });
+  T.cloud.wrapS=T.cloud.wrapT=THREE.ClampToEdgeWrapping;
   T.dirt = cnv(256,(g,s)=>{ speckle(g,s,"#c9b184",["#b89f72","#dcc79c","#a8906144"],2600); });
   T.bark = cnv(256,(g,s)=>{ g.fillStyle="#6e4a2c"; g.fillRect(0,0,s,s);
     for(let x=0;x<s;x+=10+Math.random()*8){ g.fillStyle=["#5d3d24","#7d5734","#4e331e"][Math.floor(Math.random()*3)]; g.fillRect(x,0,5+Math.random()*4,s); }
