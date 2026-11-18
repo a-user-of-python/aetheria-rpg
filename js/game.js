@@ -4,7 +4,7 @@
 import * as THREE from "three";
 import { CLASSES, WEAPONS, ARMOR, SPELLS, SPELL_BY_NAME, ENEMIES, VILLAGES, MAIN_QUESTS, NPC_NAMES, NPC_LINES,
   RARITIES, MODIFIERS, rollRarity, proceduralWeapon, proceduralArmor, makeSideQuest } from "./data.js";
-import { buildWorld, terrainHeight, collide, addTaggedCollider, removeTaggedColliders, WORLD_SIZE } from "./world.js";
+import { buildWorld, terrainHeight, collide, addTaggedCollider, removeTaggedColliders, biomeAt, WORLD_SIZE } from "./world.js";
 import { Room } from "./multiplayer.js";
 import { makeItemModel, SPELL_FX, makeSpellProjectile } from "./models.js";
 
@@ -37,13 +37,17 @@ let scene, camera, renderer, clock, playerMesh, playerRig, world, started=false;
 let yaw=0, pitch=0.35, camDist=11, keys={}, enemies=[], npcs=[], camps=[], chests=[], particles=[], projectiles=[], fxList=[];
 let boss=null, shieldUp=false, shieldMesh=null, speedBuffUntil=0, dmgBuffUntil=0, armorBuffUntil=0, campDensity=1;
 let atkCd=0, atkAnimUntil=0, walkPhase=0, isMoving=false, sprintTouch=false;
+let lastCastAt=0, lastXpAt=0, lastCombatAt=0, lastTarget=null, lastTargetAt=0;
+const explored=new Set(); let mapDirty=true;
 const remotes=new Map(); let room=null;
 
 function labelSprite(text, color="#fff"){
-  const cv=document.createElement("canvas"); cv.width=512; cv.height=96; const g=cv.getContext("2d");
-  g.font="bold 44px system-ui"; g.textAlign="center"; g.shadowColor="#000"; g.shadowBlur=8; g.fillStyle=color; g.fillText(text,256,58);
+  const cv=document.createElement("canvas"); cv.width=1024; cv.height=144; const g=cv.getContext("2d");
+  let fs=62; g.textAlign="center";
+  do{ g.font=`bold ${fs}px system-ui`; fs-=4; }while(g.measureText(text).width>980 && fs>20);
+  g.shadowColor="#000"; g.shadowBlur=10; g.fillStyle=color; g.fillText(text,512,88);
   const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv), transparent:true, depthTest:false}));
-  sp.scale.set(11,2.1,1); return sp;
+  sp.scale.set(13.5,1.9,1); return sp;
 }
 // ---- Full articulated humanoid: legs, arms, torso, head with eyes, hair ----
 function makeHumanoid(skin, hairColor, hairStyle, outfit){
@@ -81,14 +85,29 @@ function makeHumanoid(skin, hairColor, hairStyle, outfit){
 function attachWeapon(rig, item){
   while(rig.weaponMount.children.length) rig.weaponMount.remove(rig.weaponMount.children[0]);
   if(!item) return;
-  const m=makeItemModel(item); m.scale.setScalar(0.85); m.rotation.x=0.5; rig.weaponMount.add(m);
+  const m=makeItemModel(item); m.scale.setScalar(0.85); m.rotation.z=Math.PI; // grip at the hand, blade/staff continues past the fist (was flipped backwards)
+  rig.weaponMount.add(m);
 }
+let atkAnimStart=0, castAnimStart=0;
 function animateRig(rig, speedNorm, dt, running=false){
   rig.phase += dt*(4+speedNorm*9);
   const sw=Math.sin(rig.phase)*(running?0.95:0.62)*Math.min(1,speedNorm+0.15);
-  if(speedNorm>0.03){ rig.legL.rotation.x=sw; rig.legR.rotation.x=-sw; rig.armL.rotation.x=-sw*0.8; if(Date.now()>atkAnimUntil||rig!==playerRig) rig.armR.rotation.x=sw*0.7-0.35; }
-  else { rig.legL.rotation.x*=0.8; rig.legR.rotation.x*=0.8; rig.armL.rotation.x*=0.8; if(rig!==playerRig||Date.now()>atkAnimUntil) rig.armR.rotation.x=-0.35+Math.sin(performance.now()*0.0015)*0.05; }
-  if(rig===playerRig && Date.now()<atkAnimUntil){ rig.armR.rotation.x=-2.1+ (atkAnimUntil-Date.now())/220*1.4; }
+  if(speedNorm>0.03){ rig.legL.rotation.x=sw; rig.legR.rotation.x=-sw; rig.armL.rotation.x=-sw*0.8; rig.armR.rotation.x=sw*0.7-0.35; }
+  else { rig.legL.rotation.x*=0.8; rig.legR.rotation.x*=0.8; rig.armL.rotation.x*=0.8; rig.armR.rotation.x=-0.35+Math.sin(performance.now()*0.0015)*0.05; }
+  if(rig===playerRig){
+    const nowMs=performance.now();
+    if(atkAnimStart){ const t=nowMs-atkAnimStart; // wind up BACK, then swing FORWARD through the target
+      if(t<80) rig.armR.rotation.x=0.85*(t/80)-0.35;
+      else if(t<210) rig.armR.rotation.x=0.5 - 2.5*((t-80)/130);
+      else if(t<340) rig.armR.rotation.x=-2.0 + 1.65*((t-210)/130);
+      else atkAnimStart=0;
+      if(atkAnimStart) return;
+    }
+    if(castAnimStart){ const t=nowMs-castAnimStart; // raise the weapon hand toward the target and pulse
+      if(t<320){ rig.armR.rotation.x=-1.55+Math.sin(t/320*Math.PI)*0.25; return; }
+      castAnimStart=0;
+    }
+  }
 }
 
 // ---------- Loot ----------
@@ -100,7 +119,7 @@ function giveItem(base, rarity, source){
   if(base.kind==="armor") item.armor=Math.round((base.armor||2)*(RARITIES[rarity]?.mult||1));
   if(Math.random()<0.35 && rarity!=="Common"){ const mod=MODIFIERS[Math.floor(Math.random()*MODIFIERS.length)]; item.modifier=mod; item.name=mod.name+" "+item.name; if(mod.dmg&&item.power) item.power=Math.round(item.power*mod.dmg); if(mod.armor) item.armor=(item.armor||0)+mod.armor; }
   if(source==="shopExclusive") item.rarity="Shop";
-  P.inventory.push(item); toast(`Found: ${item.name} [${item.rarity}]`); renderInventory(); return item;
+  P.inventory.push(item); toast(`Found: ${item.name} [${item.rarity}]`, RARITIES[item.rarity]?.color); renderInventory(); return item;
 }
 function randomLoot(fromShop){
   const pool=Math.random()<0.62? WEAPONS : ARMOR;
@@ -112,7 +131,7 @@ function randomLoot(fromShop){
 // ---------- Item preview (shop + inventory): real rotating 3D model + attributes ----------
 const preview={};
 function initPreview(){
-  preview.renderer=new THREE.WebGLRenderer({antialias:true, alpha:true});
+  preview.renderer=new THREE.WebGLRenderer({antialias:true, alpha:true, preserveDrawingBuffer:true});
   preview.renderer.setSize(230,230); preview.renderer.setPixelRatio(Math.min(devicePixelRatio,2));
   preview.scene=new THREE.Scene();
   preview.camera=new THREE.PerspectiveCamera(40,1,0.1,100); preview.camera.position.set(3.4,3.2,6.4); preview.camera.lookAt(0,1.8,0);
@@ -228,6 +247,8 @@ function spawnEnemy(et, x, z, campIdx, isBoss=false){
   const lab=labelSprite(isBoss?"Malachar the Wizard":et.type, isBoss?"#e0aaff":"#ffffff"); lab.position.y=(isBoss?11:5.6*s); mesh.add(lab);
   const lvlBonus=1+P.level*0.12;
   const e={mesh, type:et.type, hp:et.hp*lvlBonus*(isBoss?22:1), hpMax:et.hp*lvlBonus*(isBoss?22:1), dmg:et.dmg*(isBoss?2.2:1), xp:et.xp*(isBoss?40:1), gold:et.gold, speed:et.speed, x, z, camp:campIdx, boss:isBoss, atkCd:0, wanderA:rand(0,6.28)};
+  // caster types have a real mana pool and cast sparkle bolts at you
+  if(isBoss || et.type==="Wizard's Lantern" || et.type==="Tower Sentinel"){ e.mana=100; e.manaMax=100; e.castCd=rand(1,3); }
   enemies.push(e); return e;
 }
 function burst(x,y,z,color,n=14){
@@ -259,28 +280,34 @@ function questProgress(kind, data={}){
 function completeQuest(q){
   if(q.done) return; q.done=true;
   gainXP(Math.round(q.xp*(P.inventory.some(i=>i.modifier?.xp)?1.1:1))); P.gold+=q.gold;
-  toast(`Quest complete: ${q.title}  +${q.xp} XP, +${q.gold} gold`);
+  toast(`Quest complete: ${q.title}  +${q.xp} XP, +${q.gold} gold`, "#ffd700");
   if(Math.random()<0.5) randomLoot();
+  // quests often reward a Spell Page — learn it from your Spellbook (B)
+  if(Math.random()<0.45){ const unlearned=SPELLS.map(s=>s.name).filter(n=>!P.spells.includes(n) && !P.inventory.some(i=>i.kind==="spellpage"&&i.spell===n));
+    if(unlearned.length){ const sn=unlearned[Math.floor(Math.random()*unlearned.length)]; const page={name:"Spell Page: "+sn, kind:"spellpage", spell:sn, rarity:"Quest", desc:"A page torn from a friendly grimoire. Learn it in your Spellbook (press B).", uid:uid++};
+      P.inventory.push(page); toast("Quest reward: "+page.name+" — open your Spellbook (B) to learn it!", "#ffd700"); } }
   if(q===currentMain()){ P.mainIdx++; if(q.id==="m14") showEnd(); }
   P.side=P.side.filter(s=>!s.done); renderQuests(); saveGame();
 }
-function gainXP(n){ P.xp+=n; while(P.xp>=P.xpNext){ P.xp-=P.xpNext; P.level++; P.xpNext=xpForLevel(P.level); P.hpMax+=14+Math.round(P.level*1.5); P.manaMax+=7; P.hp=P.hpMax; P.mana=P.manaMax; P.baseDmg+=2; toast(`⭐ Level ${P.level}! HP and power up.`); learnLevelSpells(); } updateHUD(); }
+function gainXP(n){ P.xp+=n; lastXpAt=Date.now(); while(P.xp>=P.xpNext){ P.xp-=P.xpNext; P.level++; P.xpNext=xpForLevel(P.level); P.hpMax+=14+Math.round(P.level*1.5); P.manaMax+=7; P.hp=P.hpMax; P.mana=P.manaMax; P.baseDmg+=2; toast(`⭐ Level ${P.level}! HP and power up.`); learnLevelSpells(); } updateHUD(); }
 function learnLevelSpells(){ const want={3:"River Rush",5:"Star Shower",7:"Sun Ray",9:"Crystal Shards",11:"Moonbeam",13:"Great Mend",16:"Comet Trail",19:"Aurora Wave",22:"Worldtree Blessing"}; const s=want[P.level]; if(s&&!P.spells.includes(s)){ P.spells.push(s); toast("New spell learned: "+s); } }
 
 // ---------- Combat & spells (each spell = its own model & behaviour) ----------
 function nearestEnemy(maxD){ let best=null,bd=maxD; for(const e of enemies){ const d=Math.hypot(e.x-P.pos.x,e.z-P.pos.z); if(d<bd){bd=d;best=e;} } if(boss && Math.hypot(boss.x-P.pos.x,boss.z-P.pos.z)<maxD) best=boss; return best; }
 function attack(){
-  if(atkCd>0||!started) return; atkCd=0.45; atkAnimUntil=Date.now()+220;
+  if(atkCd>0||!started) return; atkCd=0.45; atkAnimStart=performance.now();
   const dmg=P.baseDmg + (P.weapon?P.weapon.power:0);
   const best=nearestEnemy(7);
-  // visible slash arc in front of the player
+  // slash arc directly in front of where the CHARACTER faces (was keyed to camera yaw — looked backwards)
+  const ry=playerMesh.rotation.y, fx=Math.sin(ry), fz=Math.cos(ry);
   const arc=new THREE.Mesh(new THREE.TorusGeometry(3.4,0.22,8,24,Math.PI*0.9), new THREE.MeshStandardMaterial({color:P.weapon?P.weapon.color:0xffe27a, emissive:P.weapon?P.weapon.color:0xffe27a, emissiveIntensity:1.3, transparent:true}));
-  arc.position.set(P.pos.x,P.pos.y+4,P.pos.z); arc.rotation.y=-yaw+Math.PI*0.55; arc.rotation.x=0.4; scene.add(arc);
+  arc.position.set(P.pos.x+fx*2.6, P.pos.y+4, P.pos.z+fz*2.6); arc.rotation.set(0.25, ry, -0.5); scene.add(arc);
   fxList.push({mesh:arc, life:0.22, max:0.22, kind:"fade"});
-  if(best) setTimeout(()=>{ if(enemies.includes(best)||best===boss) hitEnemy(best, dmg*(Date.now()<dmgBuffUntil?1.3:1)); },110);
+  if(best) setTimeout(()=>{ if(enemies.includes(best)||best===boss) hitEnemy(best, dmg*(Date.now()<dmgBuffUntil?1.3:1)); },120);
 }
 function hitEnemy(e, dmg){
-  e.hp-=dmg; burst(e.mesh.position.x, e.mesh.position.y+3, e.mesh.position.z, 0xffe27a, 8);
+  e.hp-=dmg; lastTarget=e; lastTargetAt=Date.now(); lastCombatAt=Date.now();
+  burst(e.mesh.position.x, e.mesh.position.y+3, e.mesh.position.z, 0xffe27a, 8);
   ringFX(e.mesh.position.x, e.mesh.position.y+1.2, e.mesh.position.z, 0xffe27a, 3.2, 0.35);
   e.mesh.scale.setScalar(1.1); setTimeout(()=>e.mesh&&e.mesh.scale.setScalar(1),90);
   if(e.hp<=0){
@@ -299,22 +326,26 @@ function castSpell(name){
   const fx=SPELL_FX[name]||{mode:"projectile", geo:"orb", color:0xffe27a, speed:60, size:0.8};
   const dmg=s.power + P.level*1.5;
   const target=nearestEnemy(46);
+  castAnimStart=performance.now(); lastCastAt=Date.now();
+  const ry=playerMesh?playerMesh.rotation.y:0, fwd=new THREE.Vector3(Math.sin(ry),0,Math.cos(ry));
   if(fx.mode==="projectile"){
-    if(!target){ toast("No foe in range to aim at"); return; }
     P.mana-=s.cost;
     const mesh=makeSpellProjectile(fx);
-    mesh.position.set(P.pos.x, P.pos.y+4.6, P.pos.z); scene.add(mesh);
-    projectiles.push({mesh, target, speed:fx.speed||60, dmg, fx, trailCd:0});
+    mesh.position.set(P.pos.x+fwd.x*1.5, P.pos.y+4.6, P.pos.z+fwd.z*1.5); scene.add(mesh);
+    // targeted if a foe is near, otherwise it flies straight where you face — either way you SEE the spell
+    projectiles.push({mesh, target:target||null, dir:target?null:fwd.clone(), speed:fx.speed||60, dmg, fx, trailCd:0, travelled:0});
   } else if(fx.mode==="beam"){
-    if(!target){ toast("No foe in range to aim at"); return; }
     P.mana-=s.cost;
-    const from=new THREE.Vector3(P.pos.x, P.pos.y+4.8, P.pos.z), to=new THREE.Vector3(target.mesh.position.x, target.mesh.position.y+3, target.mesh.position.z);
+    const from=new THREE.Vector3(P.pos.x, P.pos.y+4.8, P.pos.z);
+    const to= target? new THREE.Vector3(target.mesh.position.x, target.mesh.position.y+3, target.mesh.position.z)
+                     : from.clone().addScaledVector(fwd, 26).add(new THREE.Vector3(0,0.5,0));
     const len=from.distanceTo(to);
     const beam=new THREE.Mesh(new THREE.CylinderGeometry(0.34,0.55,len,12,1,true), new THREE.MeshStandardMaterial({color:fx.color, emissive:fx.color, emissiveIntensity:2, transparent:true, opacity:0.9}));
     beam.position.copy(from).lerp(to,0.5); beam.lookAt(to); beam.rotateX(Math.PI/2); scene.add(beam);
     const core=makeSpellProjectile({geo:"orb", color:fx.color, size:0.9}); core.position.copy(to); scene.add(core);
     fxList.push({mesh:beam, life:0.38, max:0.38, kind:"fade"}); fxList.push({mesh:core, life:0.3, max:0.3, kind:"fade"});
-    hitEnemy(target, dmg);
+    if(target) hitEnemy(target, dmg);
+    else [...enemies].forEach(e=>{ if(Math.hypot(e.x-to.x, e.z-to.z)<4.5) hitEnemy(e, dmg); });
   } else if(fx.mode==="aoe"){
     P.mana-=s.cost; const R=fx.radius||11;
     ringFX(P.pos.x, P.pos.y+0.8, P.pos.z, fx.color, R, 0.8);
@@ -347,6 +378,14 @@ function castSpell(name){
   updateHUD();
 }
 
+function damagePlayer(raw){
+  lastCombatAt=Date.now();
+  if(shieldUp){ shieldUp=false; toast("Your shield sparkled away a hit!"); return; }
+  const armor=(P.armorItem?P.armorItem.armor:0)+(Date.now()<armorBuffUntil?6:0);
+  P.hp-=Math.max(1, raw-armor*0.35);
+  burst(P.pos.x,P.pos.y+4,P.pos.z,0xff9e9e,8); updateHUD();
+  if(P.hp<=0){ P.hp=P.hpMax; P.mana=P.manaMax; P.pos.set(0,0,90); toast("You poofed into stars and woke up safe in Valebrook. No harm done!"); }
+}
 // ---------- Interaction ----------
 let nearThing=null;
 function findNear(){
@@ -382,7 +421,7 @@ function interact(){
 }
 
 // ---------- UI ----------
-function toast(t){ const el=document.createElement("div"); el.className="toast"; el.textContent=t; $("toasts").appendChild(el); setTimeout(()=>el.remove(),4200); }
+function toast(t, color){ const el=document.createElement("div"); el.className="toast"; el.textContent=t; if(color) el.style.borderColor=color; $("toasts").appendChild(el); setTimeout(()=>el.remove(),4200); }
 function showDialogue(name, text){ $("dlgName").textContent=name; $("dlgText").textContent=text; $("dialogue").style.display="block"; }
 $("dlgClose").onclick=()=>$("dialogue").style.display="none";
 function updateHUD(){
@@ -392,6 +431,7 @@ function updateHUD(){
   $("goldText").textContent="🪙 "+P.gold; $("lvlBadge").textContent=P.level;
   $("spellBar").innerHTML=P.spells.slice(0,6).map((s,i)=>`<button class="spellBtn" data-s="${s}">${i+1} ${s}</button>`).join("");
   document.querySelectorAll(".spellBtn").forEach(b=>b.onclick=()=>castSpell(b.dataset.s));
+  $("equipLine").innerHTML=`⚔ <span style="color:${P.weapon?RARITIES[P.weapon.rarity]?.color:'#fff'}">${P.weapon?P.weapon.name:"Bare hands"}</span>${P.armorItem?` · 🛡 <span style="color:${RARITIES[P.armorItem.rarity]?.color}">${P.armorItem.name}</span>`:""}`;
 }
 function renderQuests(){
   const mq=currentMain();
@@ -399,13 +439,68 @@ function renderQuests(){
   $("questList").innerHTML = (mq? `<div class="q"><b>${mq.title}</b> (Lv ${mq.lvl})<br>${mq.text}<br><i>Reward ${mq.xp} XP · ${mq.gold} gold</i></div>`:"") +
     P.side.map(q=>`<div class="q"><b>${q.title}</b><br>${q.text}<br><i>Reward ${q.xp} XP · ${q.gold} gold</i></div>`).join("");
 }
-function renderInventory(){
-  $("invStats").innerHTML=`<b>${P.name}</b> — ${P.cls?P.cls.name:""} · Level ${P.level}<br>HP ${Math.ceil(P.hp)}/${P.hpMax} · Mana ${Math.ceil(P.mana)}/${P.manaMax} · 🪙 ${P.gold}<br>Weapon: ${P.weapon?P.weapon.name+" ("+P.weapon.power+")":"none"} · Armour: ${P.armorItem?P.armorItem.name+" ("+P.armorItem.armor+")":"none"}<br><b>Spells:</b> ${P.spells.join(", ")}<br><small>Tap any item to preview its own 3D model + attributes below.</small>`;
-  $("invGrid").innerHTML=P.inventory.map(it=>`<div class="item" style="border-color:${RARITIES[it.rarity]?.color||'#888'}" data-view="${it.uid}"><b>${it.name}</b><br><small>${it.rarity}${it.modifier?" · "+it.modifier.name:""} · ${it.kind==="weapon"?"Power "+it.power:"Armour "+it.armor}</small><br><button data-equip="${it.uid}">Equip</button> <button data-sell="${it.uid}">Sell ${Math.round((it.power||it.armor||5)*2)}g</button></div>`).join("") || "<p>No loot yet — open camp chests!</p>";
-  document.querySelectorAll("[data-view]").forEach(el=>el.onclick=e=>{ if(e.target.tagName==="BUTTON") return; const it=P.inventory.find(x=>x.uid==el.dataset.view); if(it) showPreview($("invPreview"), it); });
-  document.querySelectorAll("[data-equip]").forEach(b=>b.onclick=()=>{ const it=P.inventory.find(x=>x.uid==b.dataset.equip); if(it.kind==="weapon"){ P.weapon=it; if(playerRig) attachWeapon(playerRig, it); } else P.armorItem=it; toast("Equipped "+it.name); renderInventory(); updateHUD(); });
-  document.querySelectorAll("[data-sell]").forEach(b=>b.onclick=()=>{ const i=P.inventory.findIndex(x=>x.uid==b.dataset.sell); if(i>=0){ const it=P.inventory[i]; P.gold+=Math.round((it.power||it.armor||5)*2); if(P.weapon===it)P.weapon=null; if(P.armorItem===it)P.armorItem=null; P.inventory.splice(i,1); renderInventory(); updateHUD(); } });
+// Item icons: snapshot each item's own 3D model once, cache it.
+const iconCache=new Map();
+function itemIcon(it){
+  const key=it.uid||it.name; if(iconCache.has(key)) return iconCache.get(key);
+  if(!preview.renderer) initPreview();
+  preview.holder.rotation.set(0,0.6,0);
+  while(preview.holder.children.length) preview.holder.remove(preview.holder.children[0]);
+  const m=makeItemModel(it); const box=new THREE.Box3().setFromObject(m); const c=box.getCenter(new THREE.Vector3()); const sz=box.getSize(new THREE.Vector3()).length();
+  m.position.sub(c); m.position.y+=1.8; preview.holder.add(m);
+  preview.camera.position.set(0,2.2,Math.max(4.5, sz*1.15)); preview.camera.lookAt(0,1.8,0);
+  preview.renderer.render(preview.scene, preview.camera);
+  const url=preview.renderer.domElement.toDataURL(); iconCache.set(key,url); preview.active=false;
+  return url;
 }
+let selInvUid=null;
+function renderInventory(){
+  $("invStats").innerHTML=`<b>${P.name}</b> — ${P.cls?P.cls.name:""} · Level ${P.level} · 🪙 ${P.gold} &nbsp;|&nbsp; Weapon: <b style="color:${P.weapon?RARITIES[P.weapon.rarity]?.color:'#fff'}">${P.weapon?P.weapon.name:"none"}</b> · Armour: <b style="color:${P.armorItem?RARITIES[P.armorItem.rarity]?.color:'#fff'}">${P.armorItem?P.armorItem.name:"none"}</b>`;
+  let html=`<div class="slot book" id="bookSlot"><div class="slotIcon">📖</div><div class="slotName">Spellbook</div><div class="slotSub">Press B</div></div>`;
+  html+=P.inventory.map(it=>{
+    if(it.kind==="spellpage") return `<div class="slot" data-slot="${it.uid}" style="border-color:#ffd700"><div class="slotIcon">📜</div><div class="slotName">${it.spell}</div><div class="slotSub" style="color:#ffd700">Spell Page</div></div>`;
+    const equipped=(P.weapon===it||P.armorItem===it);
+    return `<div class="slot ${equipped?"equipped":""}" data-slot="${it.uid}" style="border-color:${RARITIES[it.rarity]?.color||'#888'}; box-shadow:0 0 10px ${(RARITIES[it.rarity]?.color||'#888')}55 inset"><img class="slotIcon" src="${itemIcon(it)}" alt=""><div class="slotName">${it.name}</div><div class="slotSub" style="color:${RARITIES[it.rarity]?.color}">${it.rarity}${equipped?" · EQUIPPED":""}</div></div>`;
+  }).join("");
+  $("invGrid").innerHTML=html || "<p>No loot yet — open camp chests!</p>";
+  $("bookSlot").onclick=()=>openSpellbook();
+  document.querySelectorAll("[data-slot]").forEach(el=>el.onclick=()=>{ selInvUid=+el.dataset.slot; renderInvDetail(); document.querySelectorAll(".slot").forEach(s=>s.classList.remove("sel")); el.classList.add("sel"); });
+  renderInvDetail();
+}
+function renderInvDetail(){
+  const it=P.inventory.find(x=>x.uid===selInvUid); const box=$("invPreview");
+  if(!it){ box.innerHTML="<p style='text-align:center'><small>Tap an item slot to see its model, stats and actions.</small></p>"; preview.active=false; return; }
+  if(it.kind==="spellpage"){ box.innerHTML=`<div style="text-align:center"><div style="font-size:44px">📜</div>${itemAttrHTML(it)}<br><button id="learnBtn">✨ Learn ${it.spell} (in Spellbook)</button></div>`;
+    $("learnBtn").onclick=()=>learnSpell(it); return; }
+  showPreview(box, it);
+  const acts=document.createElement("div"); acts.style.textAlign="center"; acts.style.marginTop="6px";
+  const equipped=(P.weapon===it||P.armorItem===it);
+  acts.innerHTML=`<button id="eqBtn">${equipped?"Equipped ✓":"Equip"}</button> <button id="sellBtn">Sell ${Math.round((it.power||it.armor||5)*2)}g</button>`;
+  box.appendChild(acts);
+  $("eqBtn").onclick=()=>{ if(it.kind==="weapon"){ P.weapon=it; if(playerRig) attachWeapon(playerRig, it); } else if(it.kind==="armor") P.armorItem=it; toast("Equipped "+it.name, RARITIES[it.rarity]?.color); renderInventory(); updateHUD(); };
+  $("sellBtn").onclick=()=>{ const i=P.inventory.findIndex(x=>x.uid===it.uid); if(i>=0){ P.gold+=Math.round((it.power||it.armor||5)*2); if(P.weapon===it)P.weapon=null; if(P.armorItem===it)P.armorItem=null; P.inventory.splice(i,1); selInvUid=null; renderInventory(); updateHUD(); } };
+}
+// ---------- Spellbook ----------
+const SCHOOL_ICON={Spark:"✨",Frost:"❄️",Leaf:"🌿",Light:"💛",Wind:"🌬️",Stone:"🪨",Water:"💧",Song:"🎵"};
+function openSpellbook(){ renderSpellbook(); $("spellbook").style.display="block"; }
+function learnSpell(page){
+  if(!P.spells.includes(page.spell)) P.spells.push(page.spell);
+  P.inventory=P.inventory.filter(x=>x!==page); selInvUid=null;
+  toast("Spell learned: "+page.spell+"!", "#ffd700"); renderSpellbook(); renderInventory(); updateHUD();
+}
+function renderSpellbook(){
+  const pages=P.inventory.filter(i=>i.kind==="spellpage");
+  $("bookBody").innerHTML=
+    `<h4>Your spells — the first 6 are on your hotbar (keys 1–6)</h4><div class="spellGrid">`+
+    P.spells.map((n,i)=>{ const s=SPELL_BY_NAME[n]; if(!s) return ""; const fx=SPELL_FX[n]||{};
+      return `<div class="spellCard" style="border-color:#${(fx.color||0xffe27a).toString(16).padStart(6,"0")}"><div class="spellIco">${SCHOOL_ICON[s.school]||"✨"}</div><b>${n}</b> ${i<6?`<span class="hotkey">${i+1}</span>`:`<button data-front="${n}">Put on hotbar</button>`}<br><small>${s.school} · Mana ${s.cost}${s.power?` · Power ${s.power}`:""}<br>${s.desc}</small></div>`; }).join("")+
+    `</div><h4>Spell Pages — learn new spells you earned from quests</h4>`+
+    (pages.length? pages.map(p=>`<div class="q">📜 <b>${p.spell}</b> — ${SPELL_BY_NAME[p.spell]?.desc||""} <button data-learn="${p.uid}">Learn</button></div>`).join("") : "<p><small>No spell pages yet — completing quests often rewards one.</small></p>")+
+    `<h4>⌨️ Keybinds</h4><p class="keys">WASD move · <b>Shift</b> sprint · <b>Mouse click / Space</b> attack · <b>E</b> talk / open / use · <b>1–6</b> cast hotbar spell · <b>I</b> inventory · <b>B</b> spellbook · <b>M</b> world map · <b>\`</b> dev mode · <b>Esc</b> close panels · Drag mouse to look, wheel to zoom</p>`;
+  document.querySelectorAll("[data-learn]").forEach(b=>b.onclick=()=>{ const p=P.inventory.find(x=>x.uid==b.dataset.learn); if(p) learnSpell(p); });
+  document.querySelectorAll("[data-front]").forEach(b=>b.onclick=()=>{ const n=b.dataset.front; P.spells=P.spells.filter(x=>x!==n); P.spells.unshift(n); renderSpellbook(); updateHUD(); });
+}
+$("bookClose").onclick=()=>$("spellbook").style.display="none";
 function openBoard(v){
   $("panelTitle").textContent="Quest Post — "+v.name; $("shopPreview").style.display="none"; $("panelBody").innerHTML="";
   for(let i=0;i<3;i++){ const q=makeSideQuest(v.name, P.level); const d=document.createElement("div"); d.className="q";
@@ -435,8 +530,38 @@ function openShop(v){
 $("panelClose").onclick=()=>{ $("panel").style.display="none"; preview.active=false; };
 function showEnd(){ showDialogue("🎉 Story Complete!", "Malachar lowers his wand, laughs, and signs the Gardening Promise in big purple letters. Aetheria is safe — and the side quests, camps and villages still hold many hours of adventures. Thank you for playing!"); }
 
-// ---------- Save ----------
-function saveGame(){ try{ localStorage.setItem("aetheria-save", JSON.stringify({name:P.name, level:P.level, xp:P.xp, gold:P.gold, mainIdx:P.mainIdx, chestsOpened:P.chestsOpened, spells:P.spells, inv:P.inventory, clsId:P.cls?.id})); }catch(e){} }
+// ---------- Explored map ----------
+const CELL=50, GRIDN=Math.floor(WORLD_SIZE/CELL); // 48x48 cells
+function cellKey(cx,cz){ return cx+","+cz; }
+function markExplored(){
+  const pcx=Math.floor((P.pos.x+WORLD_SIZE/2)/CELL), pcz=Math.floor((P.pos.z+WORLD_SIZE/2)/CELL);
+  for(let dx=-2;dx<=2;dx++) for(let dz=-2;dz<=2;dz++){ const cx=pcx+dx, cz=pcz+dz; if(cx<0||cz<0||cx>=GRIDN||cz>=GRIDN) continue;
+    if(Math.hypot(dx,dz)<=2.2){ const k=cellKey(cx,cz); if(!explored.has(k)){ explored.add(k); mapDirty=true; } } }
+}
+function cellColor(cx,cz){
+  const wx=(cx+0.5)*CELL-WORLD_SIZE/2, wz=(cz+0.5)*CELL-WORLD_SIZE/2; const h=terrainHeight(wx,wz); const b=biomeAt(wx,wz,h);
+  if(h<2.2) return "#3f7fbf"; if(h>34) return "#ffffff"; if(h>22) return "#9aa0a8"; if(h>13) return "#c9d689";
+  return b==="snow"?"#eaf4ff": b==="autumn"?"#d8a34e": b==="blossom"?"#a8d88a": "#7cc46a";
+}
+function drawMap(cv, cx0, cz0, cells, cellPx, playerAngle){
+  const g=cv.getContext("2d"); g.fillStyle="#0a0f1e"; g.fillRect(0,0,cv.width,cv.height);
+  for(let cz=cz0;cz<cz0+cells;cz++) for(let cx=cx0;cx<cx0+cells;cx++){
+    if(cx<0||cz<0||cx>=GRIDN||cz>=GRIDN) continue; if(!explored.has(cellKey(cx,cz))) continue;
+    g.fillStyle=cellColor(cx,cz); g.fillRect((cx-cx0)*cellPx,(cz-cz0)*cellPx,cellPx+1,cellPx+1);
+  }
+  g.font=`${Math.max(11,cellPx*1.5)}px system-ui`; g.textAlign="center";
+  for(const v of (world?.villages||[])){ const cx=Math.floor((v.x+WORLD_SIZE/2)/CELL), cz=Math.floor((v.z+WORLD_SIZE/2)/CELL);
+    if(explored.has(cellKey(cx,cz))){ g.fillText("🏠",(cx-cx0+0.5)*cellPx,(cz-cz0+0.6)*cellPx); if(cellPx>8){ g.fillStyle="#fff"; g.font="bold 12px system-ui"; g.fillText(v.name,(cx-cx0+0.5)*cellPx,(cz-cz0)*cellPx-4); g.font=`${Math.max(11,cellPx*1.5)}px system-ui`; } } }
+  if(world?.towerPos){ const cx=Math.floor((world.towerPos.x+WORLD_SIZE/2)/CELL), cz=Math.floor((world.towerPos.z+WORLD_SIZE/2)/CELL);
+    if(explored.has(cellKey(cx,cz))) g.fillText("🗼",(cx-cx0+0.5)*cellPx,(cz-cz0+0.6)*cellPx); }
+  const pcx=(P.pos.x+WORLD_SIZE/2)/CELL-cx0, pcz=(P.pos.z+WORLD_SIZE/2)/CELL-cz0;
+  g.save(); g.translate(pcx*cellPx,pcz*cellPx); g.rotate(playerAngle||0); g.fillStyle="#fff"; g.strokeStyle="#173";
+  g.beginPath(); g.moveTo(0,-cellPx*0.8); g.lineTo(cellPx*0.5,cellPx*0.6); g.lineTo(-cellPx*0.5,cellPx*0.6); g.closePath(); g.fill(); g.stroke(); g.restore();
+}
+function openMap(){ const cv=$("mapCanvas"); drawMap(cv, 0, 0, GRIDN, cv.width/GRIDN, (playerMesh?playerMesh.rotation.y:0)); $("mapModal").style.display="block"; }
+$("mapClose").onclick=()=>$("mapModal").style.display="none";
+
+function saveGame(){ try{ localStorage.setItem("aetheria-save", JSON.stringify({name:P.name, level:P.level, xp:P.xp, gold:P.gold, mainIdx:P.mainIdx, chestsOpened:P.chestsOpened, spells:P.spells, inv:P.inventory, clsId:P.cls?.id, explored:[...explored]})); }catch(e){} }
 
 // ---------- Multiplayer ----------
 $("hostBtn").onclick=()=>{ room=new Room(onPeer); const code=room.host(); $("roomInfo").innerHTML=`Room code: <b style="font-size:26px;letter-spacing:4px">${code}</b><br><small>Friends: open this game in another tab/window on this device, choose Join Room, type the code.</small>`; startMpLoop(); };
@@ -457,14 +582,20 @@ $("startBtn").onclick=()=>{
   P.spells=[...selClass.spells]; P.xpNext=xpForLevel(1);
   const w=WEAPONS.find(x=>x.name===selClass.weapon)||WEAPONS[0]; P.weapon=giveItem({...w},"Common");
   const a=ARMOR.find(x=>x.name.startsWith(selClass.armor.split(" ")[0]))||ARMOR[0]; P.armorItem=giveItem({...a},"Common");
+  try{ const sv=JSON.parse(localStorage.getItem("aetheria-save")||"null"); if(sv?.explored) sv.explored.forEach(k=>explored.add(k)); }catch(e){}
   $("creation").style.display="none"; $("hud").style.display="block"; started=true; initThree(); updateHUD(); renderQuests(); renderInventory();
   toast("Welcome to Aetheria, "+P.name+"! WASD walk, hold SHIFT to sprint, drag to look, Space to attack, E to talk.");
 };
 function initThree(){
-  scene=new THREE.Scene(); scene.background=new THREE.Color(0x9fd8ff); scene.fog=new THREE.Fog(0x9fd8ff, 200, 950);
+  scene=new THREE.Scene();
+  { const gc=document.createElement("canvas"); gc.width=2; gc.height=512; const gg=gc.getContext("2d");
+    const gr=gg.createLinearGradient(0,0,0,512); gr.addColorStop(0,"#5ea9e6"); gr.addColorStop(0.55,"#a8d4f5"); gr.addColorStop(1,"#e8f6ff"); gg.fillStyle=gr; gg.fillRect(0,0,2,512);
+    scene.background=new THREE.CanvasTexture(gc); }
+  scene.fog=new THREE.Fog(0xd6ecfa, 260, 1150);
   camera=new THREE.PerspectiveCamera(62, innerWidth/innerHeight, 0.1, 3000);
   renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setSize(innerWidth,innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio,2));
   renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.12; // soft filmic BOTW-ish light
   $("game").appendChild(renderer.domElement);
   scene.add(new THREE.HemisphereLight(0xcfeaff, 0x5a7a4a, 0.95));
   const sun=new THREE.DirectionalLight(0xfff2cc, 1.6); sun.position.set(120,220,80); sun.castShadow=true;
@@ -479,8 +610,10 @@ function initThree(){
   clock=new THREE.Clock(); animate();
   addEventListener("resize",()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
   let dragging=false,lx=0,ly=0;
-  renderer.domElement.addEventListener("pointerdown",e=>{dragging=true;lx=e.clientX;ly=e.clientY;});
-  addEventListener("pointerup",()=>dragging=false);
+  let downX=0, downY=0, downT=0;
+  renderer.domElement.addEventListener("pointerdown",e=>{dragging=true;lx=e.clientX;ly=e.clientY;downX=e.clientX;downY=e.clientY;downT=performance.now();});
+  addEventListener("pointerup",e=>{ const wasDrag=dragging; dragging=false;
+    if(wasDrag && started && Math.hypot(e.clientX-downX,e.clientY-downY)<6 && performance.now()-downT<300 && e.target===renderer.domElement) attack(); });
   addEventListener("pointermove",e=>{ if(!dragging) return; yaw-=(e.clientX-lx)*0.005; pitch=Math.max(0.08,Math.min(1.2,pitch+(e.clientY-ly)*0.004)); lx=e.clientX; ly=e.clientY; });
   addEventListener("wheel",e=>{ camDist=Math.max(6,Math.min(22,camDist+e.deltaY*0.01)); });
 }
@@ -490,6 +623,9 @@ addEventListener("keydown",e=>{ keys[e.key.toLowerCase()]=true;
   if(e.key==="i"||e.key==="I"||e.key==="Tab"){ e.preventDefault(); const p=$("inventory"); const opening=p.style.display!=="block"; p.style.display=opening?"block":"none"; preview.active=opening; if(opening) renderInventory(); }
   if(e.key===" "){ e.preventDefault(); attack(); }
   const n=parseInt(e.key); if(n>=1&&n<=6&&P.spells[n-1]) castSpell(P.spells[n-1]);
+  if(e.key==="b"||e.key==="B"){ const bk=$("spellbook"); const opening=bk.style.display!=="block"; bk.style.display=opening?"block":"none"; if(opening) renderSpellbook(); }
+  if(e.key==="m"||e.key==="M"){ const mp=$("mapModal"); if(mp.style.display==="block") mp.style.display="none"; else openMap(); }
+  if(e.key==="Escape"){ for(const id of ["inventory","spellbook","mapModal","panel","dev","dialogue"]) $(id).style.display="none"; preview.active=false; }
   if(e.key==="`") $("dev").style.display=$("dev").style.display==="block"?"none":"block";
 });
 addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
@@ -536,6 +672,20 @@ function animate(){
   camera.position.set(cx, Math.max(cy, terrainHeight(cx,cz)+1.5), cz); camera.lookAt(P.pos.x,P.pos.y+4.8,P.pos.z);
   scene.userData.sun.position.set(P.pos.x+120, P.pos.y+220, P.pos.z+80); scene.userData.sun.target=playerMesh;
   if(world.orb) world.orb.rotation.y+=dt;
+  if(world.clouds){ for(const c of world.clouds.children){ c.position.x+=dt*1.6; if(c.position.x>1400) c.position.x=-1400; } }
+  markExplored();
+  const inCombat=Date.now()-lastCombatAt<6000;
+  $("hpWrap").classList.toggle("cond", !(P.hp<P.hpMax-0.5||inCombat));
+  $("manaWrap").classList.toggle("cond", !(P.mana<P.manaMax-0.5||Date.now()-lastCastAt<4000));
+  $("xpWrap").classList.toggle("cond", !(Date.now()-lastXpAt<5000));
+  const tf=$("targetFrame");
+  if(lastTarget && (enemies.includes(lastTarget)||lastTarget===boss) && lastTarget.hp>0 && Date.now()-lastTargetAt<7000){
+    tf.style.display="block"; $("tfName").textContent=(lastTarget.boss?"👑 ":"")+lastTarget.type;
+    $("tfHp").style.width=Math.max(0,lastTarget.hp/lastTarget.hpMax*100)+"%";
+    if(lastTarget.mana!==undefined){ $("tfManaRow").style.display="flex"; $("tfMana").style.width=(lastTarget.mana/lastTarget.manaMax*100)+"%"; } else $("tfManaRow").style.display="none";
+  } else tf.style.display="none";
+  if(!drawMap._mm || performance.now()-drawMap._mm>1000){ drawMap._mm=performance.now(); const cv=$("minimap"); const pcx=Math.floor((P.pos.x+WORLD_SIZE/2)/CELL), pcz=Math.floor((P.pos.z+WORLD_SIZE/2)/CELL);
+    drawMap(cv, pcx-6, pcz-6, 12, cv.width/12, playerMesh.rotation.y); }
   if(shieldMesh){ shieldMesh.position.set(P.pos.x, P.pos.y+3.6, P.pos.z); shieldMesh.visible=shieldUp; }
   // NPCs wander + walk animation
   for(const n of npcs){ n.a+=dt*n.sp*0.35; const nx=n.cx+Math.cos(n.a)*n.r, nz=n.cz+Math.sin(n.a)*n.r; const moving=Math.hypot(nx-n.x,nz-n.z)>0.01; n.x=nx; n.z=nz;
@@ -549,16 +699,37 @@ function animate(){
     if(e.mesh.userData.wings) e.mesh.userData.wings.forEach((w,i)=>{ w.rotation.x=Math.sin(now*0.03+i*2)*0.55; });
     if(e.mesh.userData.rig) animateRig(e.mesh.userData.rig, d<26?0.7:0.2, dt);
     e.atkCd-=dt;
-    if(d<3.6 && e.atkCd<=0){ e.atkCd=1.1; if(shieldUp){ shieldUp=false; toast("Your shield sparkled away a hit!"); } else { const armor=(P.armorItem?P.armorItem.armor:0)+(now<armorBuffUntil?6:0); P.hp-=Math.max(1, e.dmg-armor*0.35); burst(P.pos.x,P.pos.y+4,P.pos.z,0xff9e9e,8); updateHUD(); if(P.hp<=0){ P.hp=P.hpMax; P.mana=P.manaMax; P.pos.set(0,0,90); toast("You poofed into stars and woke up safe in Valebrook. No harm done!"); } } }
+    if(d<3.6 && e.atkCd<=0){ e.atkCd=1.1; lastTarget=e; lastTargetAt=Date.now(); damagePlayer(e.dmg); }
+    // casters spend mana to throw sparkle bolts at you
+    if(e.mana!==undefined){ e.mana=Math.min(e.manaMax, e.mana+dt*4); e.castCd-=dt;
+      if(d<24 && d>5 && e.mana>=25 && e.castCd<=0){ e.mana-=25; e.castCd=3.5;
+        const pm=makeSpellProjectile({geo:"orb", color:0xc792ff, size:0.85});
+        pm.position.set(e.x, e.mesh.position.y+3.4, e.z); scene.add(pm);
+        projectiles.push({mesh:pm, hostile:true, speed:34, dmg:e.dmg*1.25, fx:{color:0xc792ff}, trailCd:0, travelled:0}); } }
   }
-  // Spell projectiles: travel, trail, impact
+  // Spell projectiles: travel, trail, impact (yours home or fly straight; hostile ones fly at you)
   for(const pr of [...projectiles]){
-    if(!pr.target || !enemies.includes(pr.target) && pr.target!==boss){ scene.remove(pr.mesh); projectiles=projectiles.filter(x=>x!==pr); continue; }
-    const tp=pr.target.mesh.position; const dest=new THREE.Vector3(tp.x, tp.y+3, tp.z);
-    const dir=dest.clone().sub(pr.mesh.position); const distLeft=dir.length();
-    if(distLeft<2.6){ ringFX(dest.x, dest.y-1.5, dest.z, pr.fx.color, 4.2, 0.5); burst(dest.x,dest.y,dest.z, pr.fx.color, 12); hitEnemy(pr.target, pr.dmg); scene.remove(pr.mesh); projectiles=projectiles.filter(x=>x!==pr); continue; }
-    dir.normalize(); pr.mesh.position.addScaledVector(dir, pr.speed*dt);
-    pr.mesh.rotation.x+=dt*7; pr.mesh.rotation.z+=dt*5; pr.mesh.lookAt(dest);
+    const kill=()=>{ scene.remove(pr.mesh); projectiles=projectiles.filter(x=>x!==pr); };
+    if(pr.hostile){
+      const dest=new THREE.Vector3(P.pos.x, P.pos.y+3.6, P.pos.z);
+      const dir=dest.clone().sub(pr.mesh.position); const dl=dir.length();
+      if(dl<2.4){ burst(P.pos.x,P.pos.y+4,P.pos.z,0xd8b8ff,10); damagePlayer(pr.dmg); kill(); continue; }
+      dir.normalize(); pr.mesh.position.addScaledVector(dir, pr.speed*dt); pr.travelled=(pr.travelled||0)+pr.speed*dt;
+      if(pr.travelled>90){ kill(); continue; }
+    } else if(pr.target){
+      if(!enemies.includes(pr.target) && pr.target!==boss){ kill(); continue; }
+      const tp=pr.target.mesh.position; const dest=new THREE.Vector3(tp.x, tp.y+3, tp.z);
+      const dir=dest.clone().sub(pr.mesh.position); const distLeft=dir.length();
+      if(distLeft<2.6){ ringFX(dest.x, dest.y-1.5, dest.z, pr.fx.color, 4.2, 0.5); burst(dest.x,dest.y,dest.z, pr.fx.color, 12); hitEnemy(pr.target, pr.dmg); kill(); continue; }
+      dir.normalize(); pr.mesh.position.addScaledVector(dir, pr.speed*dt); pr.mesh.lookAt(dest);
+    } else {
+      pr.mesh.position.addScaledVector(pr.dir, pr.speed*dt); pr.travelled+=pr.speed*dt;
+      let hit=null; for(const e of enemies){ if(Math.hypot(e.x-pr.mesh.position.x, e.z-pr.mesh.position.z)<3 && Math.abs(e.mesh.position.y+3-pr.mesh.position.y)<4){ hit=e; break; } }
+      if(!hit && boss && Math.hypot(boss.x-pr.mesh.position.x, boss.z-pr.mesh.position.z)<4) hit=boss;
+      if(hit){ ringFX(pr.mesh.position.x, pr.mesh.position.y-1, pr.mesh.position.z, pr.fx.color, 4.2, 0.5); hitEnemy(hit, pr.dmg); kill(); continue; }
+      if(pr.travelled>75){ kill(); continue; }
+    }
+    pr.mesh.rotation.x+=dt*7; pr.mesh.rotation.z+=dt*5;
     pr.trailCd-=dt; if(pr.trailCd<=0){ pr.trailCd=0.03; const tr=new THREE.Mesh(new THREE.SphereGeometry(0.22,8,6), new THREE.MeshStandardMaterial({color:pr.fx.color, emissive:pr.fx.color, emissiveIntensity:1.2, transparent:true, opacity:0.7}));
       tr.position.copy(pr.mesh.position); scene.add(tr); fxList.push({mesh:tr, life:0.32, max:0.32, kind:"fade"}); }
   }
