@@ -30,19 +30,26 @@
       <div id="roomInfo"><small>Play together: open this page in another tab/window on this device, join with the host's 5-letter code, and you'll see each other in the world.</small></div>
     </div>
     <button id="startBtn" class="big">▶ Start Adventure</button>
-    <p class="help">WASD / left stick — move · Hold Shift — SPRINT · Drag — look · Space / Attack — sparkle attack · E — talk / open / use · I or Tab — inventory · 1–6 — spells · ` — Dev Mode</p>
+    <p class="help">WASD — move · Shift — sprint · Drag — look · <b>Click / Space</b> — attack · E — talk/open · 1–6 — spells · I — inventory · <b>B — spellbook</b> · <b>M — world map</b> · ` — Dev Mode</p>
   </div>
 </div>
 
 <!-- HUD -->
 <div id="hud" style="display:none">
-  <div id="bars">
-    <div class="barWrap"><div id="hpBar" class="bar hp"></div><span id="hpText"></span></div>
-    <div class="barWrap"><div id="manaBar" class="bar mana"></div><span id="manaText"></span></div>
-    <div class="barWrap"><div id="xpBar" class="bar xp"></div><span id="xpText"></span></div>
+  <div id="bars" class="glass">
+    <div id="hpWrap" class="barWrap"><div id="hpBar" class="bar hp"></div><span id="hpText"></span></div>
+    <div id="manaWrap" class="barWrap"><div id="manaBar" class="bar mana"></div><span id="manaText"></span></div>
+    <div id="xpWrap" class="barWrap"><div id="xpBar" class="bar xp"></div><span id="xpText"></span></div>
     <div id="goldRow"><span id="goldText">🪙 0</span> · Level <b id="lvlBadge">1</b></div>
+    <div id="equipLine"></div>
   </div>
-  <div id="questTracker"></div>
+  <div id="targetFrame" class="glass" style="display:none">
+    <div id="tfName"></div>
+    <div class="barWrap slim"><div id="tfHp" class="bar hp"></div></div>
+    <div class="barWrap slim" id="tfManaRow"><div id="tfMana" class="bar mana"></div></div>
+  </div>
+  <canvas id="minimap" width="168" height="168"></canvas>
+  <div id="questTracker" class="glass"></div>
   <div id="spellBar"></div>
   <div id="interact" style="display:none"></div>
   <div id="toasts"></div>
@@ -52,10 +59,12 @@
   <div id="joy"><div id="knob"></div></div>
 </div>
 
-<!-- Dialogue / Panel / Inventory / Dev -->
+<!-- Dialogue / Panel / Inventory / Spellbook / Map / Dev -->
 <div id="dialogue" class="modal" style="display:none"><h3 id="dlgName"></h3><p id="dlgText"></p><button id="dlgClose">Close</button></div>
 <div id="panel" class="modal" style="display:none"><h3 id="panelTitle"></h3><div id="shopPreview"></div><div id="panelBody"></div><button id="panelClose">Close</button></div>
-<div id="inventory" class="modal wide" style="display:none"><h3>🎒 Inventory, Spells &amp; Stats</h3><div id="invStats"></div><div id="invPreview"></div><h4>Quest log</h4><div id="questList"></div><h4>Your loot — tap an item to preview its model, Equip / Sell</h4><div id="invGrid"></div><button id="invClose">Close (I)</button></div>
+<div id="inventory" class="modal wide" style="display:none"><h3>🎒 Inventory</h3><div id="invStats"></div><div id="invGrid"></div><div id="invPreview"></div><h4>Quest log</h4><div id="questList"></div><button id="invClose">Close (I)</button></div>
+<div id="spellbook" class="modal wide" style="display:none"><h3>📖 Spellbook</h3><div id="bookBody"></div><button id="bookClose">Close (B)</button></div>
+<div id="mapModal" class="modal wide" style="display:none"><h3>🗺️ Aetheria — where you've explored</h3><canvas id="mapCanvas" width="768" height="768"></canvas><p><small>Unexplored lands stay dark. Villages and the Dark Tower appear once you've found them.</small></p><button id="mapClose">Close (M)</button></div>
 <div id="dev" class="modal" style="display:none"><h3>🛠 Dev Mode</h3>
   <label>Enemy camp density: <span id="densityVal">1.0×</span><br><input type="range" id="density" min="0" max="3" step="0.25" value="1"></label>
   <p><button id="respawnBtn">Rebuild camps at this density</button> <button id="healBtn">Refill HP / Mana</button></p>
