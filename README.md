@@ -46,9 +46,36 @@ versions far away.
 WASD / on-screen stick — move · Drag mouse — camera · Space or Attack — attack ·
 E — talk/open/use · 1–6 — cast spell · Shift — run · I — inventory · `` ` `` — Dev Mode
 
+## v2 overhaul
+- **Textured world** — procedural canvas textures (grass, dirt, stone, bark, planks,
+  shingles, plaster, snow) instead of flat colours.
+- **Full characters** — legs, arms, boots, belt, eyes, animated walk/run cycles;
+  villagers, other players and Malachar use the same articulated model.
+- **Biome trees** — snow pines on the high ground, autumn trees in the west, blossom
+  trees in the south-east, oaks & pines elsewhere, dead trees on the crags — all in
+  varied shapes and sizes. Irregular deformed rocks, not spheres.
+- **Villages rebuilt** — spacious layouts, bigger varied houses with chimneys,
+  glowing windows, porches, fenced flower gardens, lamp posts, a roofed well,
+  quest post and market stall.
+- **Collision everywhere** — houses, trees, rocks, wells, stalls, lamps and the
+  Dark Tower are solid; you can't walk through them.
+- **Real sprint** — hold Shift (or the Sprint button): ~2× speed with an FOV kick.
+- **Every item has its own model** — generated from its name/rarity: blade length,
+  guard style, pommel gem, staff top, bow curve all differ per item. Held weapons,
+  shop stock and inventory all use that item's own model.
+- **Shop & inventory previews** — tap Preview on any shop item (or tap any item in
+  your bag) to see its rotating 3D model with full attributes: power/armour,
+  rarity, modifier and description.
+- **Every spell has its own visual** — Spark Bolt is a spinning star projectile,
+  Frost Twinkle a crystal shard, Comet Trail a tailed comet, Sun Ray / Moonbeam /
+  Thunder Clap are beams, Star Shower rains stars, Aurora Wave is an expanding
+  ring, Healing spells raise light rings, Mana Shield is a visible bubble,
+  Cheer Song floats musical notes. Projectiles fly, trail, and impact with rings.
+
 ## Files
 `index.html` · `style.css` · `js/data.js` (classes/weapons/armour/spells/quests/rarities) ·
-`js/world.js` (terrain, villages, caves, tower, LOD) · `js/multiplayer.js` (5-letter rooms) ·
+`js/world.js` (terrain, villages, caves, tower, LOD, collision) · `js/textures.js` (procedural textures) ·
+`js/models.js` (unique per-item models + per-spell effect models) · `js/multiplayer.js` (5-letter rooms) ·
 `js/game.js` (gameplay, combat, quests, shops, UI)
 
 All rights reserved — viewing/playing only, no reuse without written permission.
