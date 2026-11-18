@@ -4,7 +4,7 @@
 import * as THREE from "three";
 import { CLASSES, WEAPONS, ARMOR, SPELLS, SPELL_BY_NAME, ENEMIES, VILLAGES, MAIN_QUESTS, NPC_NAMES, NPC_LINES,
   RARITIES, MODIFIERS, rollRarity, proceduralWeapon, proceduralArmor, makeSideQuest } from "./data.js";
-import { buildWorld, terrainHeight, collide, addTaggedCollider, removeTaggedColliders, biomeAt, WORLD_SIZE } from "./world.js";
+import { buildWorld, createEndless, terrainHeight, collide, addTaggedCollider, removeTaggedColliders, biomeAt, WORLD_SIZE } from "./world.js";
 import { Room } from "./multiplayer.js";
 import { makeItemModel, SPELL_FX, makeSpellProjectile } from "./models.js";
 
@@ -33,7 +33,7 @@ const P = { name:"Traveller", cls:null, level:1, xp:0, xpNext:100, hp:100, hpMax
 function xpForLevel(l){ return Math.round(100*Math.pow(l,1.55)); }
 
 // ---------- Three setup / shared ----------
-let scene, camera, renderer, clock, playerMesh, playerRig, world, started=false;
+let scene, camera, renderer, clock, playerMesh, playerRig, world, endless=null, started=false;
 let yaw=0, pitch=0.35, camDist=11, keys={}, enemies=[], npcs=[], camps=[], chests=[], particles=[], projectiles=[], fxList=[];
 let boss=null, shieldUp=false, shieldMesh=null, speedBuffUntil=0, dmgBuffUntil=0, armorBuffUntil=0, campDensity=1;
 let atkCd=0, atkAnimUntil=0, walkPhase=0, isMoving=false, sprintTouch=false;
@@ -240,6 +240,10 @@ function spawnEnemy(et, x, z, campIdx, isBoss=false){
     for(const sx of [-1,1]){ const arm=new THREE.Mesh(new THREE.CapsuleGeometry(0.5*s,1.6*s,4,10), rockM); arm.position.set(sx*2.1*s,2.8*s,0); arm.rotation.z=sx*0.25; mesh.add(arm);
       const leg=new THREE.Mesh(new THREE.CapsuleGeometry(0.55*s,1.1*s,4,10), rockM); leg.position.set(sx*0.9*s,0.9*s,0); mesh.add(leg); }
     const eye=new THREE.Mesh(new THREE.SphereGeometry(0.16*s,10,8), new THREE.MeshStandardMaterial({color:0xffcc44, emissive:0xffaa00, emissiveIntensity:1.6})); eye.position.set(0,5.1*s,0.85*s); mesh.add(eye);
+    // craggy back crystals + stone brow + shoulder boulders — a golem should look HEWN, not smooth
+    for(let k=0;k<3;k++){ const spike=new THREE.Mesh(new THREE.ConeGeometry(0.42*s,(1.4-k*0.25)*s,6), new THREE.MeshStandardMaterial({color:0xcfd8e6, emissive:0x8899bb, emissiveIntensity:0.35, roughness:0.3})); spike.position.set((k-1)*0.7*s,(4.1-k*0.3)*s,-1.2*s); spike.rotation.x=-0.5; mesh.add(spike); }
+    const brow=new THREE.Mesh(new THREE.BoxGeometry(1.5*s,0.32*s,0.4), rockM); brow.position.set(0,5.45*s,0.8*s); mesh.add(brow);
+    for(const sx of [-1,1]){ const pad=new THREE.Mesh(new THREE.SphereGeometry(0.85*s,10,8), rockM); pad.position.set(sx*2*s,4.3*s,0); pad.scale.y=0.7; mesh.add(pad); }
     if(et.type==="Tower Sentinel"){ const sh=new THREE.Mesh(new THREE.BoxGeometry(1.7*s,2.4*s,0.3), new THREE.MeshStandardMaterial({color:0x9aa6ff, metalness:0.6, roughness:0.35})); sh.position.set(2.6*s,2.6*s,0.6*s); mesh.add(sh); }
   } else if(et.type==="Bramble Beast"){
     const b=new THREE.Mesh(new THREE.SphereGeometry(1.7*s,20,16), mat); b.position.y=1.8*s; b.castShadow=true; mesh.add(b);
@@ -252,10 +256,15 @@ function spawnEnemy(et, x, z, campIdx, isBoss=false){
     const b=new THREE.Mesh(new THREE.SphereGeometry(1.8*s,20,14), rockM); b.position.y=1.5*s; b.scale.set(1.25,0.65,1); b.castShadow=true; mesh.add(b);
     for(let k=0;k<5;k++){ const cr=new THREE.Mesh(new THREE.ConeGeometry(0.4*s,1.8*s,6), new THREE.MeshStandardMaterial({color:0xcfeaff, emissive:0x66bbff, emissiveIntensity:0.7, roughness:0.2})); cr.position.set((k-2)*0.6*s, 2.6*s, -0.3*s); cr.rotation.x=-0.3; mesh.add(cr); }
     for(const sx of [-1,1]) for(let l=0;l<3;l++){ const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.12*s,0.08*s,1.6*s,6), rockM); leg.position.set(sx*1.9*s,0.7*s,(l-1)*0.8*s); leg.rotation.z=sx*0.8; mesh.add(leg); }
+    for(const sx of [-1,1]){ const claw=new THREE.Mesh(new THREE.SphereGeometry(0.62*s,12,9), rockM); claw.position.set(sx*1.5*s,1*s,1.9*s); claw.scale.set(1,0.75,1.25); mesh.add(claw);
+      const pin=new THREE.Mesh(new THREE.ConeGeometry(0.3*s,0.9*s,7), rockM); pin.position.set(sx*1.5*s,1.15*s,2.7*s); pin.rotation.x=1.1; mesh.add(pin); }
+    for(const ex of [-0.45,0.45]){ const eye=new THREE.Mesh(new THREE.SphereGeometry(0.15*s,10,8), new THREE.MeshStandardMaterial({color:0x223344})); eye.position.set(ex*s,2.2*s,1.55*s); mesh.add(eye); }
   } else if(et.type==="Wizard's Lantern"){
     const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.12*s,0.16*s,3.6*s,8), new THREE.MeshStandardMaterial({color:0x4a3a28})); pole.position.y=1.8*s; mesh.add(pole);
     const lamp=new THREE.Mesh(new THREE.SphereGeometry(0.95*s,18,14), new THREE.MeshStandardMaterial({color:0xffc46a, emissive:0xff9922, emissiveIntensity:1.7, transparent:true, opacity:0.95})); lamp.position.y=4.1*s; mesh.add(lamp);
     const cap=new THREE.Mesh(new THREE.ConeGeometry(1.15*s,0.8*s,10), new THREE.MeshStandardMaterial({color:0x5e3a8a})); cap.position.y=5.1*s; mesh.add(cap);
+    for(let k=0;k<4;k++){ const a=k/4*Math.PI*2+0.4; const bar=new THREE.Mesh(new THREE.CylinderGeometry(0.06*s,0.06*s,1.7*s,5), new THREE.MeshStandardMaterial({color:0x3a2c1c, metalness:0.5, roughness:0.5})); bar.position.set(Math.cos(a)*0.95*s,4.1*s,Math.sin(a)*0.95*s); mesh.add(bar); }
+    const base=new THREE.Mesh(new THREE.CylinderGeometry(1.05*s,1.2*s,0.3*s,10), new THREE.MeshStandardMaterial({color:0x3a2c1c})); base.position.y=3.15*s; mesh.add(base);
   } else {
     const b=new THREE.Mesh(new THREE.SphereGeometry(1.6*s,24,18), mat); b.position.y=1.7*s; b.castShadow=true; mesh.add(b);
   }
@@ -320,6 +329,7 @@ function attack(){
   arc.position.set(P.pos.x+fx*2.6, P.pos.y+4, P.pos.z+fz*2.6); arc.rotation.set(0.25, ry, -0.5); scene.add(arc);
   fxList.push({mesh:arc, life:0.22, max:0.22, kind:"fade"});
   if(best) setTimeout(()=>{ if(enemies.includes(best)||best===boss) hitEnemy(best, dmg*(Date.now()<dmgBuffUntil?1.3:1)); },120);
+  lightBraziersNear(P.pos.x+fx*2.5, P.pos.z+fz*2.5, 5.5);
 }
 function hitEnemy(e, dmg){
   e.hp-=dmg; lastTarget=e; lastTargetAt=Date.now(); lastCombatAt=Date.now();
@@ -456,6 +466,40 @@ function useAbility(){
   updateHUD();
 }
 
+// ---------- Shrines: little BOTW-style puzzles with real rewards ----------
+let carryingOrb=null;
+function allShrines(){ return [...(world?.shrines||[]), ...(endless? endless.shrines:[])]; }
+function solveShrine(sh){
+  sh.solved=true; if(sh.crystal){ sh.crystal.material=new THREE.MeshStandardMaterial({color:0xffe9a8, emissive:0xffc44d, emissiveIntensity:2.4}); }
+  burst(sh.x, sh.y+8, sh.z, 0x7ef0d4, 30); ringFX(sh.x, sh.y+1.5, sh.z, 0x7ef0d4, 9, 0.8);
+  gainXP(120); P.gold+=80;
+  const unlearned=SPELLS.map(s=>s.name).filter(n=>!P.spells.includes(n) && !P.inventory.some(i=>i.kind==="spellpage"&&i.spell===n));
+  if(unlearned.length && Math.random()<0.65){ const sn=unlearned[Math.floor(Math.random()*unlearned.length)];
+    P.inventory.push({name:"Spell Page: "+sn, kind:"spellpage", spell:sn, rarity:"Quest", desc:"Won from a shrine. Learn it in your Spellbook (B).", uid:uid++});
+    toast("🛕 Shrine solved! +120 XP, +80 gold, and a Spell Page: "+sn, "#7ef0d4");
+  } else { randomLoot(); toast("🛕 Shrine solved! +120 XP, +80 gold, and treasure!", "#7ef0d4"); }
+  renderInventory(); updateHUD(); saveGame();
+}
+function lightBraziersNear(x,z,r){
+  for(const sh of allShrines()){ if(sh.solved||sh.type!=="braziers") continue;
+    for(const b of sh.braziers){ if(!b.lit && Math.hypot(b.x-x,b.z-z)<r){ b.lit=true; b.flame.visible=true; burst(b.x, terrainHeight(b.x,b.z)+3.4, b.z, 0xffa657, 12);
+      const litCount=sh.braziers.filter(q=>q.lit).length; toast(`🔥 Brazier lit (${litCount}/3)`);
+      if(litCount===3) solveShrine(sh); } } }
+}
+function shrineInteract(){
+  for(const sh of allShrines()){ const d=Math.hypot(sh.x-P.pos.x, sh.z-P.pos.z);
+    if(d<11 && !sh.solved){
+      if(sh.type==="braziers"){ const lit=sh.braziers.filter(b=>b.lit).length;
+        showDialogue("🛕 Shrine of Embers", lit? `The ancient braziers wait. ${lit} of 3 are lit — strike the stone bowls with your weapon (attack or ability) to light the rest.` : "Three stone braziers ring this shrine. Strike each bowl with your weapon — attacks and abilities both spark them. Light all three to claim the shrine's blessing."); return true; }
+      if(sh.type==="orb"){ if(carryingOrb===sh) { /* deposit handled by walking into the ring */ showDialogue("🛕 Shrine of the Sun Orb", "Set the orb into the glowing ring at the shrine's heart — just walk it in."); return true; }
+        const od=Math.round(Math.hypot(sh.orbHome.x-P.pos.x, sh.orbHome.z-P.pos.z));
+        showDialogue("🛕 Shrine of the Sun Orb", `A golden orb rests on a pedestal ${od} paces from here. Walk into it to pick it up, carry it back, and set it in the glowing ring.`); return true; }
+    }
+    if(d<11 && sh.solved){ showDialogue("🛕 Shrine", "This shrine's blessing is yours. Its crystal glows gold in thanks."); return true; }
+  }
+  return false;
+}
+
 // ---------- Interaction ----------
 let nearThing=null;
 function findNear(){
@@ -468,10 +512,12 @@ function findNear(){
     if(Math.hypot(v.x-P.pos.x, v.z-P.pos.z)<8){ nearThing={kind:"village", v}; break; }
   }
   if(!nearThing && Math.hypot(880-P.pos.x,-880-P.pos.z)<22){ nearThing={kind:"tower"}; }
+  if(!nearThing) for(const sh of allShrines()) if(Math.hypot(sh.x-P.pos.x,sh.z-P.pos.z)<11){ nearThing={kind:"shrine", sh}; break; }
   $("interact").style.display=nearThing? "block":"none";
-  if(nearThing) $("interact").textContent = nearThing.kind==="npc"? `E — Talk to ${nearThing.n.name}` : nearThing.kind==="chest"? "E — Open chest" : nearThing.kind==="board"? "E — Quest post" : nearThing.kind==="shop"? "E — Shop" : nearThing.kind==="tower"? "E — The Dark Tower door" : "E — Village";
+  if(nearThing) $("interact").textContent = nearThing.kind==="npc"? `E — Talk to ${nearThing.n.name}` : nearThing.kind==="chest"? "E — Open chest" : nearThing.kind==="board"? "E — Quest post" : nearThing.kind==="shop"? "E — Shop" : nearThing.kind==="tower"? "E — The Dark Tower door" : nearThing.kind==="shrine"? "E — Shrine" : "E — Village";
 }
 function interact(){
+  if(shrineInteract()) return;
   if(!nearThing) return;
   if(nearThing.kind==="npc"){
     const n=nearThing.n; showDialogue(n.name, NPC_LINES[Math.floor(Math.random()*NPC_LINES.length)]);
@@ -675,6 +721,7 @@ function initThree(){
   sun.shadow.camera.left=-90; sun.shadow.camera.right=90; sun.shadow.camera.top=90; sun.shadow.camera.bottom=-90; sun.shadow.mapSize.set(2048,2048);
   scene.add(sun); scene.userData.sun=sun;
   world=buildWorld(scene);
+  endless=createEndless(scene); endless.update(0,90);
   playerRig=makeHumanoid(selSkin, selHair, selHairStyle, selOutfit);
   playerMesh=playerRig.grp; attachWeapon(playerRig, P.weapon);
   const lab=labelSprite(P.name+" · "+selClass.name,"#ffffff"); lab.position.y=9.6; playerMesh.add(lab); scene.add(playerMesh);
@@ -733,7 +780,7 @@ function animate(){
     P.pos.x += (fx*nf + rx*nr)*sp*dt; P.pos.z += (fz*nf + rz*nr)*sp*dt;
     playerMesh.rotation.y=Math.atan2(fx*nf+rx*nr, fz*nf+rz*nr);
   }
-  P.pos.x=Math.max(-1180,Math.min(1180,P.pos.x)); P.pos.z=Math.max(-1180,Math.min(1180,P.pos.z));
+  P.pos.x=Math.max(-100000,Math.min(100000,P.pos.x)); P.pos.z=Math.max(-100000,Math.min(100000,P.pos.z)); // the world is endless now — walk as far as you like
   collide(P.pos, 1.15); // cannot walk through houses/trees/rocks/tower/wells
   const ground=terrainHeight(P.pos.x,P.pos.z);
   P.pos.y += (ground-P.pos.y)*Math.min(1,dt*10);
@@ -750,6 +797,13 @@ function animate(){
   if(world.orb) world.orb.rotation.y+=dt;
   if(world.clouds){ for(const c of world.clouds.children){ c.position.x+=dt*1.6; if(c.position.x>1400) c.position.x=-1400; } }
   if(world.birds){ const t=now*0.001; for(const b of world.birds){ const a=t*b.sp*10+b.ph; b.grp.position.set(b.cx+Math.cos(a)*b.r, b.h+Math.sin(t*0.7+b.ph)*3, b.cz+Math.sin(a)*b.r); b.grp.rotation.y=-a; const flap=Math.sin(t*9+b.ph)*0.65; b.grp.userData.wl.rotation.z=flap; b.grp.userData.wr.rotation.z=-flap; } }
+  if(endless) endless.update(P.pos.x, P.pos.z);
+  // shrines: crystals spin; orb pickup + carry + deposit
+  for(const sh of allShrines()){ if(sh.crystal){ sh.crystal.rotation.y+=dt*1.2; sh.crystal.position.y=sh.y+7.6+Math.sin(now*0.002+sh.x)*0.4; }
+    if(sh.type==="orb" && !sh.solved){ const om=sh.orbMesh;
+      if(carryingOrb===sh){ om.position.set(P.pos.x, P.pos.y+8.6+Math.sin(now*0.004)*0.25, P.pos.z);
+        if(Math.hypot(sh.x-P.pos.x, sh.z-P.pos.z)<4.2){ carryingOrb=null; om.position.set(sh.x, sh.y+2.6, sh.z); solveShrine(sh); } }
+      else if(!carryingOrb && Math.hypot(sh.orbHome.x-P.pos.x, sh.orbHome.z-P.pos.z)<3.4){ carryingOrb=sh; toast("☀️ You lift the Sun Orb — carry it back to the shrine's glowing ring!"); } } }
   if(world.flies){ const t=now*0.001; for(const f of world.flies){ const a=t*f.sp+f.ph; f.grp.position.set(f.ax+Math.cos(a)*f.r, f.ay+2.2+Math.sin(t*2.1+f.ph)*0.8, f.az+Math.sin(a)*f.r); f.grp.rotation.y=-a; const flap=Math.sin(t*16+f.ph)*0.85; f.grp.userData.wl.rotation.z=flap; f.grp.userData.wr.rotation.z=-flap; } }
   markExplored();
   const inCombat=Date.now()-lastCombatAt<6000;
@@ -769,12 +823,30 @@ function animate(){
   // NPCs wander + walk animation
   for(const n of npcs){ n.a+=dt*n.sp*0.35; const nx=n.cx+Math.cos(n.a)*n.r, nz=n.cz+Math.sin(n.a)*n.r; const moving=Math.hypot(nx-n.x,nz-n.z)>0.01; n.x=nx; n.z=nz;
     n.mesh.position.set(n.x, terrainHeight(n.x,n.z), n.z); n.mesh.rotation.y=Math.atan2(Math.cos(n.a), Math.sin(n.a))+Math.PI/2; animateRig(n.rig, moving?0.5:0, dt); }
-  // Enemies AI
+  // Enemies AI — every kind moves its OWN way now, no more uniform drifting:
+  // slimes HOP (and squash), golems plod and wobble, sprites flutter and dart,
+  // crabs scuttle sideways in bursts, lanterns sway in arcs, sentinels march.
   for(const e of [...enemies]){
     const d=Math.hypot(e.x-P.pos.x, e.z-P.pos.z);
-    if(d<26 && d>2.8){ e.x+=(P.pos.x-e.x)/d*e.speed*dt*3.2; e.z+=(P.pos.z-e.z)/d*e.speed*dt*3.2; }
-    else { e.wanderA+=dt*0.7; e.x+=Math.cos(e.wanderA)*dt*e.speed*0.5; e.z+=Math.sin(e.wanderA)*dt*e.speed*0.5; }
-    e.mesh.position.set(e.x, terrainHeight(e.x,e.z)+(e.type==="Mischief Sprite"||e.type==="Cloud Imp"? 1.2+Math.sin(now*0.005+e.x)*0.4 : Math.abs(Math.sin(now*0.004+e.x))*0.22), e.z);
+    e.moveT=(e.moveT||0)+dt; const mt=e.moveT;
+    const chasing=d<26 && d>2.8;
+    let dirx, dirz, spd=e.speed*(chasing?3.2:0.5);
+    if(chasing){ dirx=(P.pos.x-e.x)/d; dirz=(P.pos.z-e.z)/d; }
+    else { e.wanderA+=dt*0.7; dirx=Math.cos(e.wanderA); dirz=Math.sin(e.wanderA); }
+    let hopY=0, latx=0, latz=0;
+    const t=e.type;
+    if(t.includes("Slime")){ const ph=mt*5.4; hopY=Math.abs(Math.sin(ph))*1.6; spd*= (Math.sin(ph)>-0.2? 1.5:0.2);
+      e.mesh.scale.set(1.14-0.16*Math.abs(Math.sin(ph)), 0.8+0.34*Math.abs(Math.sin(ph)), 1.14-0.16*Math.abs(Math.sin(ph))); }
+    else if(t.includes("Golem")){ spd*=0.55; e.mesh.rotation.z=Math.sin(mt*2.1)*0.085; e.mesh.rotation.x=Math.sin(mt*1.7)*0.05; hopY=Math.abs(Math.sin(mt*2.1))*0.14; }
+    else if(t==="Mischief Sprite"||t==="Cloud Imp"){ hopY=1.7+Math.sin(mt*3.1)*0.55; const sw=Math.sin(mt*2.6)*7; latx=-dirz*sw*dt*3; latz=dirx*sw*dt*3; }
+    else if(t==="Crystal Crab"){ const burst=(mt%1.4)<0.7; spd*= burst?1.35:0.25; const side=((Math.floor(mt/1.4)%2)===0)? 0.85:-0.85;
+      const rx=dirx*Math.cos(side)-dirz*Math.sin(side), rz=dirx*Math.sin(side)+dirz*Math.cos(side); dirx=rx; dirz=rz; hopY=Math.abs(Math.sin(mt*9))*0.18; }
+    else if(t==="Wizard's Lantern"){ hopY=2.3+Math.sin(mt*1.9)*0.45; const sw=Math.sin(mt*1.4)*5; latx=-dirz*sw*dt*3; latz=dirx*sw*dt*3; }
+    else if(t==="Tower Sentinel"){ hopY=Math.abs(Math.sin(mt*5))*0.1; }
+    else hopY=Math.abs(Math.sin(mt*4.4))*0.22;
+    e.x+=dirx*spd*dt+latx; e.z+=dirz*spd*dt+latz;
+    e.mesh.position.set(e.x, terrainHeight(e.x,e.z)+hopY, e.z);
+    if(chasing && !t.includes("Slime")) e.mesh.rotation.y=Math.atan2(dirx,dirz);
     if(e.mesh.userData.wings) e.mesh.userData.wings.forEach((w,i)=>{ w.rotation.x=Math.sin(now*0.03+i*2)*0.55; });
     if(e.mesh.userData.rig) animateRig(e.mesh.userData.rig, d<26?0.7:0.2, dt);
     e.atkCd-=dt;
