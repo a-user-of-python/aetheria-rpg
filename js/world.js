@@ -65,30 +65,87 @@ export function buildWorld(scene){
     }
   }
 
-  // ---- BOTW grass: thousands of instanced grass tufts across the meadows ----
+  // ---- Grass: REAL 3D tufts — seven bent, tapered blades of geometry each,
+  // vertex-coloured dark at the root and pale at the tip (no flat sprites) ----
   {
-    const bladeTex=T.grassBlade;
-    const gGeo=new THREE.PlaneGeometry(3.4,2.6); gGeo.translate(0,1.2,0);
-    const gMat=new THREE.MeshStandardMaterial({map:bladeTex, transparent:true, alphaTest:0.4, side:THREE.DoubleSide, roughness:1});
-    const COUNT=5200; const grass=new THREE.InstancedMesh(gGeo, gMat, COUNT);
+    const posArr=[], colArr=[], idxArr=[];
+    const cBase=new THREE.Color(0x2e6b2c), cTip=new THREE.Color(0x9bdd84);
+    let seed=7; const srand=()=>{ seed=(seed*16807)%2147483647; return seed/2147483647; };
+    let vOff=0;
+    for(let b=0;b<7;b++){
+      const ang=b/7*Math.PI*2 + srand()*0.5, h=1.7+srand()*1.1, w=0.17, bend=0.35+srand()*0.4;
+      const local=[[-w,0,0],[w,0,0],[-w*0.55,h*0.6,bend*0.45],[w*0.55,h*0.6,bend*0.45],[0,h,bend]];
+      const cols=[cBase,cBase,cBase.clone().lerp(cTip,0.5),cBase.clone().lerp(cTip,0.5),cTip];
+      const axis=new THREE.Vector3(0,1,0);
+      local.forEach((v,i)=>{ const vec=new THREE.Vector3(v[0],v[1],v[2]).applyAxisAngle(axis,ang); posArr.push(vec.x,vec.y,vec.z); colArr.push(cols[i].r,cols[i].g,cols[i].b); });
+      idxArr.push(vOff,vOff+1,vOff+2, vOff+2,vOff+1,vOff+3, vOff+2,vOff+3,vOff+4); vOff+=5;
+    }
+    const tuftGeo=new THREE.BufferGeometry();
+    tuftGeo.setAttribute("position", new THREE.Float32BufferAttribute(posArr,3));
+    tuftGeo.setAttribute("color", new THREE.Float32BufferAttribute(colArr,3));
+    tuftGeo.setIndex(idxArr); tuftGeo.computeVertexNormals();
+    const tuftMat=new THREE.MeshStandardMaterial({vertexColors:true, roughness:1, side:THREE.DoubleSide});
+    const COUNT=6500; const grass=new THREE.InstancedMesh(tuftGeo, tuftMat, COUNT);
     const dummy=new THREE.Object3D(); let placed=0, guard=0; let gseed=31; const grnd=()=>{ gseed=(gseed*16807)%2147483647; return gseed/2147483647; };
     while(placed<COUNT && guard++<COUNT*4){
       const x=(grnd()*2-1)*1120, z=(grnd()*2-1)*1120, h=terrainHeight(x,z);
-      if(h>16) continue; if(FLAT.some(f=>Math.hypot(x-f.x,z-f.z)<f.r*0.55)) continue;
-      dummy.position.set(x,h-0.15,z); dummy.rotation.set(0, grnd()*Math.PI, 0); const sc=0.8+grnd()*0.9; dummy.scale.set(sc,sc,sc);
+      if(h>16) continue; if(FLAT.some(f=>Math.hypot(x-f.x,z-f.z)<f.r*0.5)) continue;
+      dummy.position.set(x,h-0.12,z); dummy.rotation.set(0, grnd()*Math.PI, 0); const sc=0.85+grnd()*1.0; dummy.scale.set(sc,sc*(0.9+grnd()*0.4),sc);
       dummy.updateMatrix(); grass.setMatrixAt(placed++, dummy.matrix);
     }
     grass.count=placed; grass.instanceMatrix.needsUpdate=true; group.add(grass);
     // flower patches: little instanced colour dots in the meadows
     const fGeo=new THREE.SphereGeometry(0.32,8,6);
     const fMat=new THREE.MeshStandardMaterial({roughness:0.7});
-    const flowers=new THREE.InstancedMesh(fGeo, fMat, 700); const fcol=new THREE.Color();
+    const flowers=new THREE.InstancedMesh(fGeo, fMat, 1400); const fcol=new THREE.Color();
     let fp=0; guard=0;
-    while(fp<700 && guard++<4000){ const x=(grnd()*2-1)*1000, z=(grnd()*2-1)*1000, h=terrainHeight(x,z);
+    while(fp<1400 && guard++<8000){ const x=(grnd()*2-1)*1000, z=(grnd()*2-1)*1000, h=terrainHeight(x,z);
       if(h>12) continue; if(FLAT.some(f=>Math.hypot(x-f.x,z-f.z)<f.r*0.5)) continue;
       dummy.position.set(x,h+0.35,z); dummy.rotation.set(0,0,0); dummy.scale.setScalar(0.8+grnd()*0.8); dummy.updateMatrix();
       flowers.setMatrixAt(fp, dummy.matrix); flowers.setColorAt(fp, fcol.setHex([0xff7bcd,0xffe27a,0xffffff,0xffa657,0xc792ff][Math.floor(grnd()*5)])); fp++; }
     flowers.count=fp; if(flowers.instanceColor) flowers.instanceColor.needsUpdate=true; group.add(flowers);
+    // bushes: instanced leafy blobs everywhere the grass grows
+    const bGeo=new THREE.SphereGeometry(1.6,12,9); bGeo.scale(1,0.72,1);
+    const bushMat=new THREE.MeshStandardMaterial({map:T.leaves, roughness:1});
+    const bushes=new THREE.InstancedMesh(bGeo, bushMat, 420); let bp=0; guard=0;
+    while(bp<420 && guard++<6000){ const x=(grnd()*2-1)*1080, z=(grnd()*2-1)*1080, h=terrainHeight(x,z);
+      if(h>17) continue; if(FLAT.some(f=>Math.hypot(x-f.x,z-f.z)<f.r*0.62)) continue;
+      dummy.position.set(x,h+0.55,z); dummy.rotation.set(0,grnd()*3,0); dummy.scale.setScalar(0.8+grnd()*1.5); dummy.updateMatrix();
+      bushes.setMatrixAt(bp, dummy.matrix); bushes.setColorAt(bp, fcol.setHex([0xffffff,0xd8ffd0,0xffe9c9,0xffd9ec][Math.floor(grnd()*4)])); bp++; }
+    bushes.count=bp; bushes.instanceMatrix.needsUpdate=true; if(bushes.instanceColor) bushes.instanceColor.needsUpdate=true; group.add(bushes);
+  }
+  // ---- Dirt paths between the villages (instanced worn-earth discs) ----
+  {
+    const pathMat=new THREE.MeshStandardMaterial({map:T.dirt, roughness:1, polygonOffset:true, polygonOffsetFactor:-2});
+    const spots=[]; const pairs=[[0,1],[0,2],[0,3],[0,4],[1,3],[2,4]];
+    for(const [a,b] of pairs){ const A=VILLAGES[a], B=VILLAGES[b]; const d=Math.hypot(B.x-A.x,B.z-A.z); const steps=Math.floor(d/7);
+      for(let s2=2;s2<steps-1;s2++){ const t=s2/steps; spots.push([A.x+(B.x-A.x)*t, A.z+(B.z-A.z)*t]); } }
+    const pGeo=new THREE.CircleGeometry(3.6,10); pGeo.rotateX(-Math.PI/2);
+    const paths=new THREE.InstancedMesh(pGeo, pathMat, spots.length);
+    const dummy=new THREE.Object3D(); let pseed=13; const prand=()=>{ pseed=(pseed*16807)%2147483647; return pseed/2147483647; };
+    spots.forEach(([x,z],i)=>{ dummy.position.set(x, terrainHeight(x,z)+0.09, z); dummy.rotation.set(0,prand()*3,0); dummy.scale.set(0.9+prand()*0.5,1,0.9+prand()*0.5); dummy.updateMatrix(); paths.setMatrixAt(i,dummy.matrix); });
+    paths.instanceMatrix.needsUpdate=true; group.add(paths);
+  }
+  // ---- Wildlife: circling birds + butterflies (animated in game.js) ----
+  const birds=[], flies=[];
+  {
+    const birdMat=new THREE.MeshStandardMaterial({color:0x3a4a6b, roughness:0.8});
+    for(let i=0;i<9;i++){ const bg=new THREE.Group();
+      const body=new THREE.Mesh(new THREE.ConeGeometry(0.5,2.6,8), birdMat); body.rotation.x=Math.PI/2; bg.add(body);
+      const wl=new THREE.Mesh(new THREE.PlaneGeometry(3.6,1.1), new THREE.MeshStandardMaterial({color:0x5a6f9e, side:THREE.DoubleSide})); wl.position.x=-1.9; const wlP=new THREE.Group(); wlP.add(wl); bg.add(wlP);
+      const wr=wl.clone(); wr.position.x=1.9; const wrP=new THREE.Group(); wrP.add(wr); bg.add(wrP);
+      bg.userData={wl:wlP, wr:wrP}; group.add(bg);
+      birds.push({grp:bg, cx:(hash(i,5)*2-1)*700, cz:(hash(i,6)*2-1)*700, r:90+hash(i,7)*160, h:62+hash(i,8)*36, sp:0.05+hash(i,9)*0.05, ph:hash(i,10)*6.28});
+    }
+    const flyCols=[0xff9ecb,0xffe27a,0xaee9ff,0xffa657];
+    for(let i=0;i<24;i++){ const fg=new THREE.Group();
+      const wmat=new THREE.MeshStandardMaterial({color:flyCols[i%4], side:THREE.DoubleSide, emissive:flyCols[i%4], emissiveIntensity:0.25});
+      const wl=new THREE.Mesh(new THREE.PlaneGeometry(0.85,0.6), wmat); wl.position.x=-0.45; const wlP=new THREE.Group(); wlP.add(wl); fg.add(wlP);
+      const wr=new THREE.Mesh(new THREE.PlaneGeometry(0.85,0.6), wmat); wr.position.x=0.45; const wrP=new THREE.Group(); wrP.add(wr); fg.add(wrP);
+      fg.userData={wl:wlP, wr:wrP}; group.add(fg);
+      const ax=(hash(i,11)*2-1)*950, az=(hash(i,12)*2-1)*950;
+      flies.push({grp:fg, ax, az, ay:terrainHeight(ax,az), r:3+hash(i,13)*7, sp:0.4+hash(i,14)*0.5, ph:hash(i,15)*6.28});
+    }
   }
   // ---- Sky: big soft drifting clouds ----
   const clouds=new THREE.Group();
@@ -138,7 +195,7 @@ export function buildWorld(scene){
     lod.addLevel(hi,0); lod.addLevel(lo,200); return lod;
   }
   let seed=11; const rnd=()=>{ seed=(seed*16807)%2147483647; return seed/2147483647; };
-  for(let i=0;i<700;i++){
+  for(let i=0;i<1150;i++){
     const x=(rnd()*2-1)*1150, z=(rnd()*2-1)*1150;
     if(FLAT.some(f=>Math.hypot(x-f.x,z-f.z)<f.r*0.82)) continue;
     const h=terrainHeight(x,z); const biome=biomeAt(x,z,h);
@@ -246,7 +303,7 @@ export function buildWorld(scene){
   }
 
   scene.add(group);
-  return { villages, caves, towerPos:{x:tx,z:tz,y:ty}, orb, clouds };
+  return { villages, caves, towerPos:{x:tx,z:tz,y:ty}, orb, clouds, birds, flies };
 }
 // Tagged colliders can be removed again (e.g. camps rebuilt at a new density).
 export function addTaggedCollider(tag, c){ c.tag=tag; COLLIDERS.push(c); return c; }
