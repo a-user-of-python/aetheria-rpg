@@ -37,10 +37,12 @@ export function buildWorld(scene){
   const seg=220, geo=new THREE.PlaneGeometry(WORLD_SIZE,WORLD_SIZE,seg,seg);
   geo.rotateX(-Math.PI/2);
   const pos=geo.attributes.position, colors=[];
-  const cGrass=new THREE.Color(0xffffff), cDry=new THREE.Color(0xd8e6b0), cRock=new THREE.Color(0xb9bec6), cSnow=new THREE.Color(0xffffff), cSand=new THREE.Color(0xf2e2b0);
+  const cGrass=new THREE.Color(0xffffff), cMeadow=new THREE.Color(0xe6f2b8), cDry=new THREE.Color(0xd8e6b0), cRock=new THREE.Color(0xb9bec6), cStrata=new THREE.Color(0xd8c2a0), cSnow=new THREE.Color(0xffffff), cSand=new THREE.Color(0xf2e2b0);
   for(let i=0;i<pos.count;i++){
     const x=pos.getX(i), z=pos.getZ(i), h=terrainHeight(x,z); pos.setY(i,h);
-    let c = h>34? cSnow : h>22? cRock : h>13? cDry : cGrass;
+    // Breath-of-the-Wild style: big soft meadow patches across the lowlands
+    const patch=noise(x*0.0016+40, z*0.0016+40);
+    let c = h>34? cSnow : h>22? ((Math.floor(h/7)%2===0)? cRock : cStrata) : h>13? cDry : (patch>0.55? cMeadow : cGrass);
     if(h<2.2) c=cSand;
     colors.push(c.r,c.g,c.b);
   }
@@ -61,6 +63,53 @@ export function buildWorld(scene){
       const p=new THREE.Mesh(new THREE.CircleGeometry(12,18), pathMat);
       p.rotation.x=-Math.PI/2; p.rotation.z=Math.random()*3; p.position.set(x, terrainHeight(x,z)+0.22, z); group.add(p);
     }
+  }
+
+  // ---- BOTW grass: thousands of instanced grass tufts across the meadows ----
+  {
+    const bladeTex=T.grassBlade;
+    const gGeo=new THREE.PlaneGeometry(3.4,2.6); gGeo.translate(0,1.2,0);
+    const gMat=new THREE.MeshStandardMaterial({map:bladeTex, transparent:true, alphaTest:0.4, side:THREE.DoubleSide, roughness:1});
+    const COUNT=5200; const grass=new THREE.InstancedMesh(gGeo, gMat, COUNT);
+    const dummy=new THREE.Object3D(); let placed=0, guard=0; let gseed=31; const grnd=()=>{ gseed=(gseed*16807)%2147483647; return gseed/2147483647; };
+    while(placed<COUNT && guard++<COUNT*4){
+      const x=(grnd()*2-1)*1120, z=(grnd()*2-1)*1120, h=terrainHeight(x,z);
+      if(h>16) continue; if(FLAT.some(f=>Math.hypot(x-f.x,z-f.z)<f.r*0.55)) continue;
+      dummy.position.set(x,h-0.15,z); dummy.rotation.set(0, grnd()*Math.PI, 0); const sc=0.8+grnd()*0.9; dummy.scale.set(sc,sc,sc);
+      dummy.updateMatrix(); grass.setMatrixAt(placed++, dummy.matrix);
+    }
+    grass.count=placed; grass.instanceMatrix.needsUpdate=true; group.add(grass);
+    // flower patches: little instanced colour dots in the meadows
+    const fGeo=new THREE.SphereGeometry(0.32,8,6);
+    const fMat=new THREE.MeshStandardMaterial({roughness:0.7});
+    const flowers=new THREE.InstancedMesh(fGeo, fMat, 700); const fcol=new THREE.Color();
+    let fp=0; guard=0;
+    while(fp<700 && guard++<4000){ const x=(grnd()*2-1)*1000, z=(grnd()*2-1)*1000, h=terrainHeight(x,z);
+      if(h>12) continue; if(FLAT.some(f=>Math.hypot(x-f.x,z-f.z)<f.r*0.5)) continue;
+      dummy.position.set(x,h+0.35,z); dummy.rotation.set(0,0,0); dummy.scale.setScalar(0.8+grnd()*0.8); dummy.updateMatrix();
+      flowers.setMatrixAt(fp, dummy.matrix); flowers.setColorAt(fp, fcol.setHex([0xff7bcd,0xffe27a,0xffffff,0xffa657,0xc792ff][Math.floor(grnd()*5)])); fp++; }
+    flowers.count=fp; if(flowers.instanceColor) flowers.instanceColor.needsUpdate=true; group.add(flowers);
+  }
+  // ---- Sky: big soft drifting clouds ----
+  const clouds=new THREE.Group();
+  for(let i=0;i<26;i++){
+    const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:T.cloud, transparent:true, opacity:0.85, depthWrite:false}));
+    const sc=120+hash(i,7)*160; sp.scale.set(sc, sc*0.42, 1);
+    sp.position.set((hash(i,1)*2-1)*1300, 190+hash(i,2)*110, (hash(i,3)*2-1)*1300);
+    clouds.add(sp);
+  }
+  group.add(clouds);
+  // ---- Ruins: broken stone columns scattered like old Hyrule ----
+  const ruinMat=textured(T.rock, 0xcfc8b8, 1, 1, 0.95);
+  const ruinSpots=[[240,180],[-420,-60],[120,-640],[-180,420],[720,-140],[-760,-420],[420,420],[-60,-240]];
+  for(const [rx,rz] of ruinSpots){
+    const ry=terrainHeight(rx,rz); const rg=new THREE.Group();
+    for(let ci=0;ci<3;ci++){ const hgt=[7,4.5,2.2][ci]; const col=new THREE.Mesh(new THREE.CylinderGeometry(1.5,1.7,hgt,10), ruinMat);
+      col.position.set(ci*4.6-4.6, hgt/2, (ci%2)*2-1); col.castShadow=true; rg.add(col);
+      const cap=new THREE.Mesh(new THREE.BoxGeometry(3.8,0.8,3.8), ruinMat); cap.position.set(ci*4.6-4.6, hgt+0.4, (ci%2)*2-1); rg.add(cap);
+      COLLIDERS.push({x:rx+ci*4.6-4.6, z:rz+(ci%2)*2-1, r:2}); }
+    const slab=new THREE.Mesh(new THREE.BoxGeometry(9,1,4), ruinMat); slab.position.set(0,0.5,4); slab.rotation.y=0.4; rg.add(slab);
+    rg.position.set(rx,ry,rz); group.add(rg);
   }
 
   // ---- Trees by biome, varied shapes ----
@@ -151,19 +200,32 @@ export function buildWorld(scene){
     group.add(vg); villages.push({...v, y, group:vg});
   });
 
-  // Caves
+  // Caves — a proper rock mound with a dark mouth, stone frame and crystal
+  // clusters flanking the entrance (no more snake-arch, no floating ball).
   const caves=[]; const caveSpots=[[-260,240],[300,-180],[-880,-160],[180,820],[820,240],[-380,-760]];
+  const crystalMat=new THREE.MeshStandardMaterial({color:0xaee9ff, emissive:0x55bbee, emissiveIntensity:1.5, roughness:0.2});
   for(const [cx,cz] of caveSpots){
     const cg=new THREE.Group(); const cy=terrainHeight(cx,cz);
-    const yaw=Math.atan2(-cx,-cz); // cg.lookAt(0,cy,0) rotation, so local +x maps to (cos yaw, 0, -sin yaw)
-    for(let i=0;i<8;i++){ const a=(i/8)*Math.PI; const r=new THREE.Mesh(new THREE.SphereGeometry(4.6,16,12), rockMat);
-      const pp=r.geometry.attributes.position; for(let vi=0;vi<pp.count;vi++){ const f=0.85+hash(vi,i)*0.3; pp.setXYZ(vi,pp.getX(vi)*f,pp.getY(vi)*f,pp.getZ(vi)*f); }
-      r.position.set(Math.cos(a)*9.5, Math.sin(a)*8.5, 0); r.castShadow=true; cg.add(r);
-      // colliders only for the ground-level jamb rocks — the arch stones overhead must not become a phantom wall
-      if(Math.sin(a)*8.5 < 3.5) COLLIDERS.push({x:cx+Math.cos(a)*9.5*Math.cos(yaw), z:cz-Math.cos(a)*9.5*Math.sin(yaw), r:3.4}); }
-    const glow=new THREE.Mesh(new THREE.SphereGeometry(1.1,16,12), new THREE.MeshStandardMaterial({color:0xaee9ff, emissive:0x66ccff, emissiveIntensity:1.6}));
-    glow.position.set(0,2,-5); cg.add(glow);
+    const yaw=Math.atan2(-cx,-cz);
+    // mound: one big weathered dome, squashed, sunk into the ground
+    const mound=new THREE.Mesh(new THREE.SphereGeometry(13,26,20), rockMat);
+    const mp=mound.geometry.attributes.position; for(let vi=0;vi<mp.count;vi++){ const f=0.88+hash(vi,3)*0.22; mp.setXYZ(vi, mp.getX(vi)*f, mp.getY(vi)*f, mp.getZ(vi)*f); } mound.geometry.computeVertexNormals();
+    mound.scale.set(1.25,0.72,1); mound.position.y=-1.5; mound.castShadow=true; cg.add(mound);
+    // dark mouth: an arch-shaped black inset on the side facing the world centre
+    const mouth=new THREE.Mesh(new THREE.CircleGeometry(4.6,20,0,Math.PI), new THREE.MeshBasicMaterial({color:0x06080e}));
+    mouth.scale.set(1,1.5,1); mouth.position.set(0,0.4,12.2); cg.add(mouth);
+    const mouthFill=new THREE.Mesh(new THREE.PlaneGeometry(9.2,3.4), new THREE.MeshBasicMaterial({color:0x06080e}));
+    mouthFill.position.set(0,0.2,12.15); cg.add(mouthFill);
+    // stone frame: two jamb boulders + a lintel, clearly an entrance
+    for(const sx of [-5.6,5.6]){ const jamb=new THREE.Mesh(new THREE.SphereGeometry(2.6,14,11), rockMat); jamb.position.set(sx,1.2,11.6); jamb.scale.y=1.5; jamb.castShadow=true; cg.add(jamb); }
+    const lintel=new THREE.Mesh(new THREE.SphereGeometry(3.4,14,11), rockMat); lintel.position.set(0,7.6,11.6); lintel.scale.set(1.9,0.75,1); cg.add(lintel);
+    // crystal clusters at both sides of the mouth — shards, not a ball
+    for(const sx of [-8.6,8.6]){ for(let k=0;k<4;k++){ const cr=new THREE.Mesh(new THREE.ConeGeometry(0.5+((k*29)%30)/60, 1.8+((k*41)%50)/28, 6), crystalMat);
+      cr.position.set(sx+(k-1.5)*0.85, 0.8, 11.4+((k%2)*0.7)); cr.rotation.z=(k-1.5)*0.24; cg.add(cr); } }
     cg.position.set(cx,cy,cz); cg.lookAt(0,cy,0); group.add(cg); caves.push({x:cx,z:cz,y:cy});
+    // colliders: mound sides + jambs, entrance itself stays walkable up to the mouth
+    const lx2wx=(lx,lz)=>({x:cx+lx*Math.cos(yaw)+lz*Math.sin(yaw), z:cz-lx*Math.sin(yaw)+lz*Math.cos(yaw)});
+    for(const [lx,lz,r] of [[-11,4,4.5],[11,4,4.5],[-8,-6,5],[8,-6,5],[0,-11,6],[-5.6,11.6,2.4],[5.6,11.6,2.4]]){ const w=lx2wx(lx,lz); COLLIDERS.push({x:w.x, z:w.z, r}); }
   }
 
   // Dark Tower
@@ -177,8 +239,14 @@ export function buildWorld(scene){
   orb.position.y=116; tower.add(orb);
   tower.position.set(tx,ty,tz); group.add(tower); COLLIDERS.push({x:tx,z:tz,r:19});
 
+  // Hero trees: a few huge lone landmark oaks you can navigate by
+  for(const [hx,hz,hs] of [[150,300,2.6],[-350,-520,2.3],[480,120,2.8],[-150,700,2.4],[60,-420,2.5]]){
+    const lod=new THREE.LOD(); canopy(lod, "oak", biomeAt(hx,hz,terrainHeight(hx,hz))==="autumn"?"autumn":"green", hs);
+    lod.position.set(hx, terrainHeight(hx,hz)-0.2, hz); group.add(lod); COLLIDERS.push({x:hx,z:hz,r:2.2});
+  }
+
   scene.add(group);
-  return { villages, caves, towerPos:{x:tx,z:tz,y:ty}, orb };
+  return { villages, caves, towerPos:{x:tx,z:tz,y:ty}, orb, clouds };
 }
 // Tagged colliders can be removed again (e.g. camps rebuilt at a new density).
 export function addTaggedCollider(tag, c){ c.tag=tag; COLLIDERS.push(c); return c; }
