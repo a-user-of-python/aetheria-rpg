@@ -30,10 +30,17 @@ button.big{display:block;width:100%;font-size:22px;padding:16px;background:#2e9e
 #abilityChip{position:absolute;bottom:64px;left:50%;transform:translateX(-50%);padding:6px 16px;font-weight:700;font-size:14.5px;pointer-events:none;white-space:nowrap}
 #spellBar{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);display:flex;gap:6px;pointer-events:auto;flex-wrap:wrap;justify-content:center;max-width:92vw}
 .spellBtn{background:rgba(20,32,64,.9);border:1px solid #6a86c8;font-size:13px;padding:8px 10px}
-#interact{position:absolute;bottom:96px;left:50%;transform:translateX(-50%);background:rgba(8,12,24,.85);padding:10px 18px;border-radius:999px;font-weight:700}
-#toasts{position:absolute;bottom:150px;left:12px;display:flex;flex-direction:column;gap:6px}
-.toast{background:rgba(8,12,24,.88);border-left:4px solid #ffe27a;padding:9px 12px;border-radius:8px;max-width:360px}
-.touchBtns{position:absolute;right:12px;bottom:14px;display:flex;gap:8px;pointer-events:auto}
+#interact{position:absolute;bottom:118px;left:50%;transform:translateX(-50%);background:rgba(8,12,24,.85);padding:10px 18px;border-radius:999px;font-weight:700}
+#toasts{position:absolute;top:206px;left:12px;display:flex;flex-direction:column;gap:6px}
+.toast{background:rgba(8,12,24,.88);border-left:4px solid #ffe27a;padding:9px 12px;border-radius:8px;max-width:340px}
+.touchBtns{position:absolute;right:12px;bottom:14px;display:flex;gap:8px;pointer-events:auto;flex-wrap:wrap;justify-content:flex-end;max-width:52vw}
+@media (max-width:860px){
+  #bars{width:min(252px,60vw);padding:8px}
+  #minimap{width:112px;height:112px}
+  #questTracker{top:136px;max-width:205px;font-size:12.5px}
+  #toasts{top:170px}.toast{max-width:250px;font-size:13.5px}
+  #targetFrame{width:min(250px,62vw)}
+}
 .modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);max-height:86vh;overflow:auto;background:linear-gradient(170deg,#14224a,#101b38);border:2px solid #5a76b8;border-radius:16px;padding:18px;z-index:30;box-shadow:0 12px 44px rgba(0,0,0,.55)}
 .modal.wide{width:min(800px,96vw)}
 .q{background:#1d2c52;border-radius:10px;padding:10px;margin:8px 0;line-height:1.45}
